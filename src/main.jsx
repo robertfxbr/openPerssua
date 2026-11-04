@@ -8,6 +8,8 @@ const MAX_TRANSCRIPT_LINES = 500; // cap para não crescer sem limite em reuniõ
 const ASSIST_CONTEXT_LINES = 40;  // janela de contexto enviada ao LLM no auto-assist
 const ASSIST_COOLDOWN_MS = 12000; // mínimo entre sugestões automáticas
 const PENDING_QUESTION_MS = 4500; // espera a continuação de pergunta sem "?"
+const PENDING_QUESTION_DRAFT_MS = 1200; // no modo entrevista, o rascunho começa rápido
+const DRAFT_REFRESH_MS = 1400;    // debounce do refinamento enquanto o outro fala
 
 // ---- VAD (voice activity detection) por energia ----
 // Em vez de flush fixo a cada 5s (que cortava frases e gerava alucinações do
@@ -146,6 +148,10 @@ function App() {
   const suggestionRef = useRef(suggestion);
   const assistBusyRef = useRef(false);
   const assistStreamIdRef = useRef(null);
+  const assistSettledRef = useRef(null);     // resolve quando o rascunho atual encerra
+  const assistSupersededRef = useRef(false); // rascunho abortado p/ versão mais completa
+  const assistRefreshingRef = useRef(false); // refresh de rascunho em andamento
+  const refreshTimerRef = useRef(null);      // debounce do refinamento ao vivo
   const askStreamIdRef = useRef(null);
   const lastQuestionRef = useRef('');
   const lastAssistAtRef = useRef(0);
@@ -383,28 +389,67 @@ function App() {
   // ================= copiloto ativo =================
 
   // Detector com janela de contexto: uma pergunta falada pode chegar quebrada
-  // em 2 flushes de 5s. Combina as últimas falas e, se não houver "?", espera
-  // a continuação antes de disparar (pending com timeout).
+  // em 2 flushes. No modo ENTREVISTA, o copiloto não espera a pergunta acabar:
+  // começa a rascunhar assim que detecta o início e, se a pergunta continuar
+  // crescendo (o entrevistador ainda está falando), aborta o rascunho e
+  // recomeça com o texto mais completo — "rascunho ao vivo".
   function maybeAutoAssist() {
-    if (!autoAssistRef.current || assistBusyRef.current) return;
+    if (!autoAssistRef.current) return;
     const combined = sysWindowRef.current.slice(-2).join(' ');
     const q = detectQuestion(combined);
     if (!q) return;
-    if (q === lastQuestionRef.current) return;
+
+    const interview = assistModeRef.current === 'interview';
+    const last = lastQuestionRef.current;
+
+    // A pergunta detectada é uma extensão da anterior → refina o rascunho
+    // (debounced), em vez de ignorar como duplicata ou disparar como nova.
+    const grows = last && q !== last && (q.includes(last) || last.includes(q));
+    if (grows && interview) {
+      lastQuestionRef.current = q;
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => {
+        if (assistRefreshingRef.current) return;
+        assistRefreshingRef.current = true;
+        refreshDraft(q).finally(() => { assistRefreshingRef.current = false; });
+      }, DRAFT_REFRESH_MS);
+      return;
+    }
+    if (q === last) return;
+    if (assistBusyRef.current) return;
 
     const hasTerminator = q.includes('?');
     if (!hasTerminator) {
       if (pendingRef.current?.q === q) return; // já aguardando continuação
       clearTimeout(pendingRef.current?.timer);
+      // Entrevista: rascunha cedo; o restante da pergunta entra pelo
+      // refinamento ao vivo. Outros modos: espera a continuação.
+      const wait = interview ? PENDING_QUESTION_DRAFT_MS : PENDING_QUESTION_MS;
       pendingRef.current = {
         q,
-        timer: setTimeout(() => fireAssist(q), PENDING_QUESTION_MS),
+        timer: setTimeout(() => fireAssist(q), wait),
       };
       return;
     }
     clearTimeout(pendingRef.current?.timer);
     pendingRef.current = null;
     fireAssist(q);
+  }
+
+  // Aborta o rascunho em andamento e recomeça com a pergunta mais completa.
+  // Se o rascunho já terminou, simplesmente gera de novo (a pergunta cresceu
+  // depois que a resposta ficou pronta).
+  async function refreshDraft(newQ) {
+    const sid = assistStreamIdRef.current;
+    if (sid) {
+      assistSupersededRef.current = true;
+      api.llm.abortStream(sid);
+      await (assistSettledRef.current || Promise.resolve());
+    } else if (assistBusyRef.current) {
+      return; // stream ainda iniciando: a próxima janela de debounce pega
+    }
+    if (!autoAssistRef.current || assistModeRef.current !== 'interview') return;
+    runAssist(newQ, undefined, { draft: true });
   }
 
   function fireAssist(q) {
@@ -414,15 +459,17 @@ function App() {
     if (now - lastAssistAtRef.current < ASSIST_COOLDOWN_MS) return;
     lastQuestionRef.current = q;
     lastAssistAtRef.current = now;
-    runAssist(q);
+    runAssist(q, undefined, { draft: assistModeRef.current === 'interview' });
   }
 
-  async function runAssist(q, instruction) {
+  async function runAssist(q, instruction, opts = {}) {
     if (assistBusyRef.current) return;
     assistBusyRef.current = true;
+    assistSupersededRef.current = false;
+    if (q) lastQuestionRef.current = q;
     setError('');
     setSummary(null);
-    setSuggestion({ question: q || '', text: '', streaming: true });
+    setSuggestion({ question: q || '', text: '', streaming: true, draft: !!opts.draft });
     let acc = '';
     let streamErr = null;
 
@@ -434,17 +481,25 @@ function App() {
       acc += delta;
       setSuggestion((s) => (s ? { ...s, text: acc } : s));
     });
+    // stream-error também encerra a espera — no refresh ao vivo o abort
+    // intencional chega por este canal; sem isso o assist travaria "ocupado"
+    let resolveDone;
+    const done = new Promise((resolve) => { resolveDone = resolve; });
+    const unsubDone = api.llm.onStreamDone(({ streamId }) => {
+      if (!matches(streamId)) return;
+      unsubDone();
+      resolveDone();
+    });
     const unsubErr = api.llm.onStreamError(({ streamId, error: err }) => {
       if (!matches(streamId)) return;
       streamErr = err;
+      unsubDone();
+      resolveDone();
     });
-    const done = new Promise((resolve) => {
-      const unsubDone = api.llm.onStreamDone(({ streamId }) => {
-        if (!matches(streamId)) return;
-        unsubDone();
-        resolve();
-      });
-    });
+    // Resolve só no finally (após liberar assistBusyRef) — o refresh ao vivo
+    // aguarda este sinal antes de recomeçar, evitando corrida com o "ocupado".
+    let resolveSettled;
+    assistSettledRef.current = new Promise((resolve) => { resolveSettled = resolve; });
 
     try {
       const { streamId } = await api.llm.chatStream({
@@ -458,18 +513,24 @@ function App() {
       });
       assistStreamIdRef.current = streamId;
       await done;
-      if (streamErr) setError(`sugestão: ${streamErr}`);
+      const superseded = assistSupersededRef.current;
+      if (streamErr && !superseded) setError(`sugestão: ${streamErr}`);
       const dbId = sessionRef.current?.dbId;
-      if (dbId && acc) api.db.addMessage({ sessionId: dbId, role: 'assistant', content: acc });
+      if (dbId && acc && !superseded) {
+        api.db.addMessage({ sessionId: dbId, role: 'assistant', content: acc });
+      }
     } catch (e) {
-      setError(`sugestão: ${e.message || e}`);
-      setSuggestion(null);
+      if (!assistSupersededRef.current) {
+        setError(`sugestão: ${e.message || e}`);
+        setSuggestion(null);
+      }
     } finally {
       unsubChunk();
       unsubErr();
       assistStreamIdRef.current = null;
       assistBusyRef.current = false;
       setSuggestion((s) => (s ? { ...s, streaming: false } : s));
+      resolveSettled();
     }
   }
 
@@ -1034,7 +1095,10 @@ function App() {
       {suggestion && (
         <div className="suggestion">
           <div className="sug-head">
-            <span className="label">✦ sugestão{suggestion.streaming ? '…' : ''}</span>
+            <span className="label">
+              ✦ {suggestion.draft && suggestion.streaming ? 'rascunho ao vivo' : 'sugestão'}
+              {suggestion.streaming ? '…' : ''}
+            </span>
             <div className="sug-actions">
               <button
                 onClick={() => navigator.clipboard.writeText(suggestion.text)}
@@ -1070,7 +1134,7 @@ function App() {
             <span className="big">✦</span>
             A transcrição da conversa aparece aqui.
             <br />No modo <b>Entrevista</b> com ⚡ auto ligado, o copiloto
-            <br />sugere sua resposta assim que detectar uma pergunta.
+            <br />rascunha sua resposta enquanto o entrevistador ainda fala.
             <br /><span className="hint">Ctrl+Shift+M ouvir · Enter sugerir · C/Y copiar</span>
           </div>
         )}

@@ -43,6 +43,11 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
   falas), três modos (Entrevista com perfil/STAR, Reunião, Livre), cooldown
   anti-spam, chips de reformulação ("mais curto", "mais formal", "em inglês",
   "exemplo prático") e gatilho manual (botão ✦)
+- **Rascunho ao vivo (modo Entrevista)**: o copiloto começa a redigir a
+  resposta ~1s depois de detectar o início da pergunta — enquanto o
+  entrevistador ainda está falando. Se a pergunta crescer, o rascunho é
+  abortado e recomeçado com o texto completo (debounce de 1,4s), então a
+  resposta final costuma estar pronta antes de ele terminar de perguntar
 - **Atalhos globais de ação**: `Ctrl+Shift+Enter` sugere resposta,
   `Ctrl+Shift+C`/`Y` copia a última sugestão — sem tirar o foco da chamada
 - **Resumo automático** ao encerrar a escuta (decisões, ações, pendências),

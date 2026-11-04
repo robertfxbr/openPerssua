@@ -13,7 +13,7 @@ if (Test-Path $uninst) {
 }
 
 # 3. Instala a nova versão
-$setup = 'E:\persuanew\Persua2\openperssua\release\OpenPerssua Setup 0.2.7.exe'
+$setup = 'E:\persuanew\Persua2\openperssua\release\OpenPerssua Setup 0.2.8.exe'
 $p = Start-Process $setup -ArgumentList '/S' -PassThru
 $p.WaitForExit(180000) | Out-Null
 $deadline = (Get-Date).AddSeconds(60)
