@@ -1,0 +1,116 @@
+# OpenPerssua
+
+> **Autor e mantenedor:** [Robert](https://github.com/robertfxbr) —
+> desenvolvido com assistência de IA (Kimi). Contribuições são bem-vindas;
+> veja `AGENTS.md` — inclui a política de créditos que vale também para
+> agentes de IA que trabalharem neste código.
+
+Copiloto de reuniões open source para desktop (Windows/macOS/Linux): um overlay
+sempre visível que escuta o microfone e o áudio do sistema, transcreve com
+Whisper local e responde perguntas sobre a conversa — **com o LLM que você já
+tem**: ChatGPT (assinatura, via login OAuth), OpenAI API, Claude API,
+**Claude Code CLI** ou Ollama local.
+
+Projeto de portfólio: reimplementação limpa (MIT) baseada em análise de
+comportamento de um produto comercial feita com
+[REA](https://github.com/morluto/rea). Nenhum código ou asset do produto
+original é usado. Ver `../ARCHITECTURE.md` para o desmembramento completo das
+lógicas (274 canais IPC mapeados, 245 módulos analisados).
+
+## Destaques técnicos
+
+- **Electron + React + Vite**, processo principal modular (1 arquivo por domínio)
+- **LLMRouter** com adapters plugáveis — interface única `chat/chatStream`:
+
+  | Adapter | Backend | Credencial |
+  |---|---|---|
+  | `OpenAIAdapter` | api.openai.com | API key |
+  | `ChatGPTOAuthAdapter` | Responses API | assinatura ChatGPT (OAuth PKCE, fluxo público do Codex CLI) |
+  | `ClaudeAdapter` | api.anthropic.com | API key |
+  | `ClaudeCodeAdapter` | subprocess `claude -p` | login local do Claude Code |
+  | `OllamaAdapter` | servidor OpenAI-compatible local | nenhuma |
+
+- **OAuth PKCE** contra `auth.openai.com` com token cifrado via `safeStorage`
+- **Whisper local** (whisper.cpp server embutido no instalador) com buffer de
+  áudio limitado e deltas de transcrição via IPC; SQLite (better-sqlite3) para
+  sessões/mensagens
+- **Captura de áudio do sistema (loopback)** via `electron-audio-loopback`:
+  o app ouve o que os outros dizem em chamadas de Discord, Zoom, Google Meet,
+  Teams etc. — sem driver virtual e sem configurar "mixagem estéreo". Duas
+  sessões STT paralelas: `mic` (você) e `system` (a reunião)
+- **Copiloto ativo (auto-assist)**: detector local de perguntas (heurística
+  PT-BR/EN com janela de contexto — reconhece pergunta quebrada em duas
+  falas), três modos (Entrevista com perfil/STAR, Reunião, Livre), cooldown
+  anti-spam, chips de reformulação ("mais curto", "mais formal", "em inglês",
+  "exemplo prático") e gatilho manual (botão ✦)
+- **Atalhos globais de ação**: `Ctrl+Shift+Enter` sugere resposta,
+  `Ctrl+Shift+C`/`Y` copia a última sugestão — sem tirar o foco da chamada
+- **Resumo automático** ao encerrar a escuta (decisões, ações, pendências),
+  salvo na sessão em SQLite
+- **VAD por fim de fala** (energy-based, AudioWorklet em thread dedicada):
+  o flush acontece no fim do enunciado, não num relógio fixo — frases não são
+  mais cortadas e o Whisper não "alucina" em silêncio. Idioma fixo PT-BR/EN-US
+- **Histórico de sessões** com transcrição, respostas do copiloto e
+  exportação em Markdown
+- **Refresh token OAuth** do ChatGPT: o login não expira mais a cada sessão
+- **Modo mini** (pílula compacta com a sugestão ao vivo), **medidores de
+  áudio** mic/sistema, **temas** (escuro/claro, 3 acentos, opacidade, fonte)
+  e **onboarding** de primeira execução em 3 passos
+- Overlay transparente, always-on-top, com click-through e atalho global
+- Streaming SSE/NDJSON ponta a ponta com abort (`AbortController`)
+
+## Rodando
+
+```bash
+npm install
+npm run dev        # Vite + Electron com hot reload
+```
+
+Pré-requisitos conforme o provedor escolhido:
+- Whisper local: coloque o `whisper-server` (whisper.cpp) em
+  `<userData>/whisper-bin/` — o modelo GGML é baixado automaticamente.
+- Claude Code: `claude` CLI instalado e autenticado (`claude login`).
+- Ollama: servidor em `http://127.0.0.1:11434`.
+
+## Estrutura
+
+```
+electron/
+  main.js                  bootstrap + atalho global
+  preload.js               contextBridge com allowlist
+  windows/OverlayWindow.js overlay always-on-top / click-through
+  stt/WhisperService.js    whisper.cpp server + sessões + cap de buffer
+  llm/LLMRouter.js         seleção de provedor
+  llm/providers/           OpenAI, ChatGPT OAuth, Claude, Claude Code, Ollama
+  db/                      better-sqlite3 + schema.sql
+  prompts/meeting.js       copiloto + resumo (anti prompt-injection)
+  ipc/index.js             handlers por domínio
+src/main.jsx               UI do overlay (React)
+```
+
+## Gerando o instalador (Windows)
+
+```bash
+npm install        # se better-sqlite3 falhar por falta de Visual Studio,
+                   # use: npm install --ignore-scripts (o electron-builder
+                   # baixa o binário nativo certo para o Electron na hora de empacotar)
+npm run dist:win   # gera release/OpenPerssua Setup X.Y.Z.exe (NSIS)
+```
+
+Notas de ambiente:
+- Rode com um Node.js standalone (`C:\Program Files\nodejs\node.exe`). Se o
+  ambiente tiver `ELECTRON_RUN_AS_NODE=1` exportado, remova-o antes do build
+  (`env -u ELECTRON_RUN_AS_NODE ...`) — senão os processos filhos do
+  electron-builder se comportam como Node e quebram o empacotamento.
+- Se a extração do pacote `winCodeSign` falhar com "Cannot create symbolic
+  link" (privilégio ausente no Windows sem Developer Mode), use o wrapper
+  tolerante: renomeie `node_modules/7zip-bin/win/x64/7za.exe` para
+  `7za-real.exe` e compile `7za.cs` (incluído neste repo) com
+  `csc.exe -nologo -out:7za.exe 7za.cs` — o wrapper ignora erros de symlink
+  que só afetam itens de build para macOS.
+- O instalador não é assinado digitalmente (sem certificado); o Windows
+  SmartScreen pode exibir aviso na primeira execução.
+
+## Licença
+
+MIT — ver `LICENSE`.

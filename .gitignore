@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+whisper-bin/
+*.db
+*.db-wal
+*.db-shm
+release/
+screenshot*.png
