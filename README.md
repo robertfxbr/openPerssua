@@ -50,6 +50,11 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
 - **VAD por fim de fala** (energy-based, AudioWorklet em thread dedicada):
   o flush acontece no fim do enunciado, não num relógio fixo — frases não são
   mais cortadas e o Whisper não "alucina" em silêncio. Idioma fixo PT-BR/EN-US
+- **Vocabulário embutido de viés (prompt-biasing)**: nomes brasileiros mais
+  frequentes (IBGE), termos de reunião/entrevista e tecnologia PT-BR/EN são
+  injetados como `initial_prompt` do Whisper em toda sessão, corrigindo nomes
+  próprios e jargões; o campo "vocabulário" das configurações soma termos
+  seus (empresa, equipe, produto) com prioridade máxima
 - **Histórico de sessões** com transcrição, respostas do copiloto e
   exportação em Markdown
 - **Refresh token OAuth** do ChatGPT: o login não expira mais a cada sessão
@@ -110,6 +115,25 @@ Notas de ambiente:
   que só afetam itens de build para macOS.
 - O instalador não é assinado digitalmente (sem certificado); o Windows
   SmartScreen pode exibir aviso na primeira execução.
+
+## Créditos de dados (vocabulário embutido)
+
+O viés de transcrição (`electron/stt/vocabulary.js`) usa frequências e listas
+públicas — obrigado aos mantenedores:
+
+- **Nomes brasileiros**: IBGE/Censo 2010, via
+  [datasets-br/prenomes](https://github.com/datasets-br/prenomes) e
+  [MedidaSP/nomes-brasileiros-ibge](https://github.com/MedidaSP/nomes-brasileiros-ibge)
+- **Frequência lexical PT-BR**: NILC/USP São Carlos e Corpus Brasileiro
+  (PUC-SP) via [Linguateca](https://www.linguateca.pt/),
+  [hermitdave/FrequencyWords](https://github.com/hermitdave/FrequencyWords) e
+  [CaiqueDourado/dicionario-portugues](https://github.com/CaiqueDourado/dicionario-portugues)
+- **Técnica de prompt-biasing**: parâmetro `initial_prompt`/`--prompt` do
+  [whisper.cpp](https://github.com/ggerganov/whisper.cpp) e "keyword boosting"
+  da API Whisper da OpenAI
+
+Se você mantém alguma dessas fontes e quiser ajuste na atribuição, abra uma
+issue.
 
 ## Licença
 

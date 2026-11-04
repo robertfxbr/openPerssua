@@ -885,7 +885,7 @@ function App() {
               className="model-input"
               value={sttPrompt}
               placeholder="nomes próprios e jargões (ex.: Robert, OpenPerssua)"
-              title="O Whisper usa como contexto — melhora nomes e termos técnicos"
+              title="O Whisper usa como contexto — soma-se ao vocabulário embutido (nomes IBGE + termos de reunião e tecnologia PT-BR/EN)"
               onChange={(e) => {
                 setSttPrompt(e.target.value);
                 api.settings.set('stt.prompt', e.target.value);

@@ -5,6 +5,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { composePrompt } = require('./vocabulary');
 
 const MAX_BUFFER_BYTES = 16 * 1024 * 1024; // equivalente ao CappedAudioBuffer
 const SERVER_PORT = 8178;
@@ -133,7 +134,9 @@ class WhisperService {
   async startSession({ sessionId, source = 'mic', model = 'ggml-base.bin', language = 'auto', prompt, onProgress }) {
     const { path: modelPath } = await this.downloadModel(model, onProgress);
     const port = await this.ensureServer(modelPath);
-    this.sessions.set(sessionId, { source, language, prompt, port, pcmChunks: [], bytes: 0, active: true });
+    // Viés de vocabulário: o prompt do usuário tem prioridade; o vocabulário
+    // embutido (nomes IBGE + reunião/tecnologia PT-BR/EN) vem em seguida.
+    this.sessions.set(sessionId, { source, language, prompt: composePrompt(prompt, language), port, pcmChunks: [], bytes: 0, active: true });
     return { sessionId, port };
   }
 
