@@ -1,6 +1,8 @@
 // OpenAI API (api.openai.com) com API key do usuário.
 // Equivale ao `custom-api:fetch-stream` do original apontado para a OpenAI.
 
+const { toOpenAIChat } = require('../messageFormat');
+
 class OpenAIAdapter {
   constructor({ settingsStore }) {
     this.id = 'openai';
@@ -17,7 +19,7 @@ class OpenAIAdapter {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: model || 'gpt-4o-mini', messages }),
+      body: JSON.stringify({ model: model || 'gpt-4o-mini', messages: toOpenAIChat(messages) }),
       signal,
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
@@ -30,7 +32,7 @@ class OpenAIAdapter {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: model || 'gpt-4o-mini', messages, stream: true }),
+      body: JSON.stringify({ model: model || 'gpt-4o-mini', messages: toOpenAIChat(messages), stream: true }),
       signal,
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);

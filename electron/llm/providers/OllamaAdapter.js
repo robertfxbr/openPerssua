@@ -4,6 +4,7 @@
 // aqui o fetch roda no main process, que não tem CORS).
 
 const { readSseStream } = require('./OpenAIAdapter');
+const { toOpenAIChat } = require('../messageFormat');
 
 class OllamaAdapter {
   constructor({ settingsStore }) {
@@ -29,7 +30,7 @@ class OllamaAdapter {
     const res = await fetch(`${await this.baseUrl()}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: model || 'llama3.1', messages }),
+      body: JSON.stringify({ model: model || 'llama3.1', messages: toOpenAIChat(messages) }),
       signal,
     });
     if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);
@@ -41,7 +42,7 @@ class OllamaAdapter {
     const res = await fetch(`${await this.baseUrl()}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: model || 'llama3.1', messages, stream: true }),
+      body: JSON.stringify({ model: model || 'llama3.1', messages: toOpenAIChat(messages), stream: true }),
       signal,
     });
     if (!res.ok) throw new Error(`Ollama ${res.status}: ${await res.text()}`);

@@ -1,6 +1,7 @@
 // Anthropic API (Claude) com API key do usuário.
 
 const { readSseStream } = require('./OpenAIAdapter');
+const { toAnthropic } = require('../messageFormat');
 
 class ClaudeAdapter {
   constructor({ settingsStore }) {
@@ -21,7 +22,7 @@ class ClaudeAdapter {
       model: model || 'claude-sonnet-4-5',
       max_tokens: 2048,
       ...(system ? { system } : {}),
-      messages: rest,
+      messages: toAnthropic(rest),
       stream,
     };
   }

@@ -1,21 +1,37 @@
 // Registro central de handlers IPC — 1 domínio por bloco.
 // Os nomes de canais seguem o padrão observado no original (domínio:ação).
 
-const { ipcMain, app } = require('electron');
+const { ipcMain, app, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
 const { LLMRouter } = require('../llm/LLMRouter');
 const { WhisperService } = require('../stt/WhisperService');
-const { SettingsStore } = require('../settings/SettingsStore');
 const { TokenStore } = require('../llm/providers/ChatGPTOAuthAdapter');
-const { setClickThrough, toggleOverlay, setCompactMode } = require('../windows/OverlayWindow');
+const {
+  setClickThrough, toggleOverlay, setCompactMode, repaintOverlay, persistWindowState,
+} = require('../windows/OverlayWindow');
 const { buildCopilotMessages, buildSummaryMessages } = require('../prompts/meeting');
 const { buildAssistMessages } = require('../prompts/assist');
+const { buildScreenMessages } = require('../prompts/screen');
+const { listDisplays, moveToDisplay } = require('../system/displays');
+const { openLogsFolder, copyRecentLogs } = require('../system/logs');
+const { captureScreen } = require('../system/screenshot');
+
+// Trecho colado muito grande estoura o contexto de modelos menores
+const MAX_CONTEXT_CHARS = 20000;
 
 function buildMessages(req) {
   if (req.mode === 'summary') return buildSummaryMessages({ transcript: req.transcript });
+  if (req.mode === 'screen') {
+    return buildScreenMessages({
+      image: req.image,
+      question: req.question,
+      transcript: req.transcript,
+      profile: req.profile,
+    });
+  }
   if (req.mode === 'assist') {
     return buildAssistMessages({
       transcript: req.transcript,
@@ -25,7 +41,11 @@ function buildMessages(req) {
       instruction: req.instruction,
     });
   }
-  return buildCopilotMessages(req);
+  return buildCopilotMessages({
+    transcript: req.transcript,
+    question: req.question,
+    extraContext: typeof req.context === 'string' ? req.context.slice(0, MAX_CONTEXT_CHARS) : undefined,
+  });
 }
 
 // Streams LLM ativos, abortáveis pelo renderer (padrão `*:abort-stream`)
@@ -40,9 +60,8 @@ function disposeIpc() {
   if (whisper) whisper.dispose();
 }
 
-function registerIpc({ db, getOverlayWindow, isDev }) {
+function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) {
   const userDataDir = app.getPath('userData');
-  const settingsStore = new SettingsStore(userDataDir);
   const tokenStore = new TokenStore(path.join(userDataDir, 'chatgpt-token.bin'), fs);
   const router = new LLMRouter({ settingsStore, tokenStore });
 
@@ -80,20 +99,49 @@ function registerIpc({ db, getOverlayWindow, isDev }) {
         });
         savedBounds = null;
       }
-      // Bug conhecido do Electron no Windows: janela transparente não repinta
-      // após resize programático — invalidate força a repintura, e o ciclo
-      // opacity 0.99→1 derruba o cache de superfície do DWM se persistir.
-      setTimeout(() => {
-        if (win.isDestroyed()) return;
-        win.webContents.invalidate();
-        win.setOpacity(0.99);
-        setTimeout(() => { if (!win.isDestroyed()) win.setOpacity(1); }, 40);
-      }, 80);
+      repaintOverlay(win);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String(err.message || err) };
     }
   });
+
+  // ---- multi-monitor ----
+  ipcMain.handle('overlay:list-displays', () => listDisplays(getOverlayWindow()));
+  ipcMain.handle('overlay:move-to-display', (_e, displayId) => {
+    const r = moveToDisplay(getOverlayWindow(), displayId);
+    if (r.ok) { repaintOverlay(); persistWindowState(); }
+    return r;
+  });
+
+  // ---- captura de tela e área de transferência ----
+  ipcMain.handle('screen:capture', async () => {
+    try {
+      return { ok: true, ...(await captureScreen(getOverlayWindow())) };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+  ipcMain.handle('clipboard:read-text', () => clipboard.readText());
+  // Escrita pelo main: navigator.clipboard falha quando o overlay está sem
+  // foco, que é justamente o caso dos atalhos globais.
+  ipcMain.handle('clipboard:write-text', (_e, text) => {
+    clipboard.writeText(String(text ?? ''));
+    return { ok: true };
+  });
+
+  // ---- logs ----
+  ipcMain.handle('logs:open-folder', () => openLogsFolder());
+  ipcMain.handle('logs:copy-recent', () => copyRecentLogs());
+
+  // ---- atalhos configuráveis ----
+  ipcMain.handle('shortcuts:list', () => shortcuts.list());
+  ipcMain.handle('shortcuts:set', (_e, { id, accelerator }) => {
+    // null = voltar ao padrão, "" = desativar, texto = combinação nova
+    const value = accelerator === null || typeof accelerator === 'string' ? accelerator : null;
+    return shortcuts.set(id, value);
+  });
+  ipcMain.handle('shortcuts:suspend', (_e, enabled) => shortcuts.suspend(enabled));
 
   // ---- STT ----
   ipcMain.handle('stt:start-session', (_e, opts) =>
@@ -113,7 +161,11 @@ function registerIpc({ db, getOverlayWindow, isDev }) {
     return router.chat({ messages: buildMessages(req), model: req.model });
   });
   ipcMain.handle('llm:chat-stream', async (event, req) => {
-    const streamId = crypto.randomUUID();
+    // O renderer pode escolher o id: assim ele filtra os chunks pelo id certo
+    // desde o primeiro, sem misturar com outro stream que esteja rodando.
+    const requested = typeof req.streamId === 'string' && /^[\w-]{8,64}$/.test(req.streamId)
+      && !activeStreams.has(req.streamId);
+    const streamId = requested ? req.streamId : crypto.randomUUID();
     const controller = new AbortController();
     activeStreams.set(streamId, controller);
 
@@ -160,6 +212,12 @@ function registerIpc({ db, getOverlayWindow, isDev }) {
     }));
   ipcMain.handle('db:get-messages', (_e, id) => db.getMessages(id));
   ipcMain.handle('db:get-transcriptions', (_e, id) => db.getTranscriptions(id));
+  ipcMain.handle('db:end-session', (_e, id) => { db.endSession(id); return { ok: true }; });
+  ipcMain.handle('db:resume-session', (_e, id) => db.resumeSession(id));
+  ipcMain.handle('db:update-subject', (_e, { id, subject }) => db.updateSubject(id, subject));
+  ipcMain.handle('db:delete-session', (_e, id) => db.deleteSession(id));
+  ipcMain.handle('db:clear-all', () => db.clearAll());
+  ipcMain.handle('db:get-stats', () => db.getStats());
 
   // ---- Settings ----
   ipcMain.handle('settings:get', (_e, key) => settingsStore.get(key));

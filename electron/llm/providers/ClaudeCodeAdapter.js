@@ -5,6 +5,7 @@
 // limite de tamanho de linha de comando do Windows.
 
 const { spawn } = require('child_process');
+const { hasImages } = require('../messageFormat');
 
 class ClaudeCodeAdapter {
   constructor({ settingsStore }) {
@@ -29,22 +30,59 @@ class ClaudeCodeAdapter {
       .join('\n\n');
   }
 
-  chat({ messages, signal }) {
+  // O modo `claude -p` recebe só texto pelo stdin: sem este aviso a imagem
+  // seria descartada em silêncio e a resposta viria sem ter visto a tela.
+  rejectImages(messages) {
+    if (hasImages(messages)) {
+      throw new Error('o Claude Code (CLI) não recebe imagens; para analisar a tela, escolha OpenAI, ChatGPT, Claude API ou um modelo de visão no Ollama');
+    }
+  }
+
+  async chat({ messages, signal }) {
+    this.rejectImages(messages);
     return this.run(this.flatten(messages), null, signal);
   }
 
-  chatStream({ messages, onChunk, signal }) {
+  async chatStream({ messages, onChunk, signal }) {
+    this.rejectImages(messages);
     return this.run(this.flatten(messages), onChunk, signal);
   }
 
   run(prompt, onChunk, signal) {
     return new Promise((resolve, reject) => {
-      const args = ['-p', '--output-format', onChunk ? 'stream-json' : 'text'];
+      // stream-json com --print exige --verbose (sem ele a CLI recusa e sai
+      // com código 1). --include-partial-messages faz a resposta chegar em
+      // pedaços, como nos outros provedores, em vez de tudo no final.
+      const args = onChunk
+        ? ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages']
+        : ['-p', '--output-format', 'text'];
       // shell:true no Windows para resolver claude.cmd; o prompt NÃO passa
       // pela linha de comando (vai por stdin), então não há risco de quoting.
       const child = spawn('claude', args, { shell: true });
       let output = '';
       let ndjsonBuffer = '';
+      let sawDelta = false;      // chegaram pedaços (text_delta)?
+      let fullAssistant = '';    // mensagem completa, para CLI sem pedaços
+      let result = null;         // evento final { result, is_error }
+
+      const emit = (text) => { output += text; onChunk(text); };
+
+      const handleEvent = (event) => {
+        if (event.type === 'stream_event') {
+          const e = event.event;
+          if (e?.type === 'content_block_delta' && e.delta?.type === 'text_delta' && e.delta.text) {
+            sawDelta = true;
+            emit(e.delta.text);
+          }
+        } else if (event.type === 'assistant') {
+          // Guarda e só usa se não vierem pedaços: com --include-partial-messages
+          // a mensagem completa repete o texto que já foi emitido.
+          const blocks = event.message?.content || [];
+          fullAssistant += blocks.filter((b) => b.type === 'text').map((b) => b.text).join('');
+        } else if (event.type === 'result') {
+          result = event;
+        }
+      };
 
       const killOnAbort = () => child.kill('SIGTERM');
       if (signal) signal.addEventListener('abort', killOnAbort, { once: true });
@@ -57,12 +95,7 @@ class ClaudeCodeAdapter {
         ndjsonBuffer = lines.pop();
         for (const line of lines) {
           if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line);
-            // eventos stream-json do Claude Code: assistant message deltas
-            const delta = event?.message?.content?.[0]?.text || event?.delta?.text;
-            if (delta) { output += delta; onChunk(delta); }
-          } catch { /* linha parcial */ }
+          try { handleEvent(JSON.parse(line)); } catch { /* linha parcial */ }
         }
       });
 
@@ -71,8 +104,14 @@ class ClaudeCodeAdapter {
       child.on('error', reject);
       child.on('close', (code) => {
         if (signal) signal.removeEventListener('abort', killOnAbort);
+        // Erros como login expirado chegam no evento final, não no stderr
+        if (result?.is_error) {
+          reject(new Error(`Claude Code: ${String(result.result || 'erro sem detalhe').slice(0, 500)}`));
+          return;
+        }
+        if (onChunk && !sawDelta && fullAssistant) emit(fullAssistant);
         if (code === 0) resolve(output.trim());
-        else reject(new Error(`claude CLI saiu com ${code}: ${stderr.slice(0, 500)}`));
+        else reject(new Error(`claude CLI saiu com ${code}: ${(stderr || result?.result || '').slice(0, 500)}`));
       });
 
       // Prompt por stdin e fecha o stream para o CLI começar

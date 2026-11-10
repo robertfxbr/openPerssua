@@ -171,10 +171,8 @@ class ChatGPTOAuthAdapter {
     let token = await this.getValidToken();
     if (!token?.access_token) throw new Error('não autenticado — faça login com ChatGPT');
 
-    const input = messages.map((m) => ({
-      role: m.role,
-      content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.content }],
-    }));
+    const { toResponsesInput } = require('../messageFormat');
+    const input = toResponsesInput(messages);
 
     const body = (modelName) => JSON.stringify({
       model: modelName,

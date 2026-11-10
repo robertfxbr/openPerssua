@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { detectQuestion } from './assist/questionDetector';
+import { HistoryView } from './history/HistoryView';
+import { ShortcutsPanel } from './panels/ShortcutsPanel';
+import { SystemPanel } from './panels/SystemPanel';
+import { formatClock } from './util/time';
+import { prettyAccelerator } from './util/accelerator';
 import './styles.css';
 
 const api = window.openperssua;
@@ -10,6 +15,8 @@ const ASSIST_COOLDOWN_MS = 12000; // mínimo entre sugestões automáticas
 const PENDING_QUESTION_MS = 4500; // espera a continuação de pergunta sem "?"
 const PENDING_QUESTION_DRAFT_MS = 1200; // no modo entrevista, o rascunho começa rápido
 const DRAFT_REFRESH_MS = 1400;    // debounce do refinamento enquanto o outro fala
+const NEAR_BOTTOM_PX = 48;        // abaixo disso a transcrição conta como "no fim"
+const CLIPBOARD_DEFAULT_QUESTION = 'Explique ou responda o trecho que copiei.';
 
 // ---- VAD (voice activity detection) por energia ----
 // Em vez de flush fixo a cada 5s (que cortava frases e gerava alucinações do
@@ -128,12 +135,30 @@ function App() {
 
   // ---- histórico de sessões ----
   const [view, setView] = useState('live'); // 'live' | 'history'
-  const [historySessions, setHistorySessions] = useState([]);
-  const [historyDetail, setHistoryDetail] = useState(null); // { session, transcriptions, messages }
+  const [resumeTarget, setResumeTarget] = useState(null); // sessão antiga a continuar na próxima escuta
+
+  // ---- painel de configurações / timer / rolagem ----
+  const [settingsTab, setSettingsTab] = useState('aparencia'); // aparencia | atalhos | sistema
+  const [shortcutList, setShortcutList] = useState([]);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [newBelow, setNewBelow] = useState(false); // há falas novas abaixo da área visível
+
+  // ---- contexto colado e análise de tela ----
+  const [attached, setAttached] = useState(null);       // { text } anexado à próxima pergunta
+  const [answerNote, setAnswerNote] = useState('');     // de onde veio a pergunta da resposta atual
+  const [screenResult, setScreenResult] = useState(null); // { image, question, text, streaming }
 
   const sessionRef = useRef(null);   // { dbId, micSttId, sysSttId }
   const audioRef = useRef(null);     // { mic|sys: { stream, audioCtx, processor, analyser, flusher } }
   const transcriptEndRef = useRef(null);
+  const transcriptBoxRef = useRef(null);
+  const nearBottomRef = useRef(true);   // usuário está vendo o fim da transcrição?
+  const sessionStartRef = useRef(null); // Date.now() do início da escuta atual
+  const askRef = useRef(null);          // ask() atual, p/ atalhos registrados uma vez
+  const screenRef = useRef(null);       // runScreenAnalysis() atual, idem
+  const screenStreamIdRef = useRef(null);
+  const screenAbortedRef = useRef(false); // usuário dispensou a análise no meio
   const transcriptRef = useRef([]);  // espelho do estado p/ callbacks fora do render
 
   // refs p/ valores usados dentro de callbacks de evento (registrados uma vez)
@@ -193,6 +218,10 @@ function App() {
     api.settings.get('onboarding.done').then((done) => {
       if (!done) setOnboarding(0);
     });
+    api.settings.get('ui.autoScroll').then((v) => {
+      if (v !== undefined && v !== null) setAutoScroll(Boolean(v));
+    });
+    api.shortcuts.list().then(setShortcutList).catch(() => {});
 
     const unsubDelta = api.stt.onDelta(({ source, text }) => {
       if (!text?.trim()) return;
@@ -213,10 +242,18 @@ function App() {
     });
     const unsubCopy = api.overlay.onCopySuggestion(() => {
       const s = suggestionRef.current;
-      if (s?.text) navigator.clipboard.writeText(s.text);
+      if (s?.text) copyText(s.text);
     });
     const unsubListen = api.overlay.onToggleListen(() => {
       toggleListenRef.current?.();
+    });
+    const unsubScreen = api.overlay.onScreenshotTrigger(() => {
+      screenRef.current?.();
+    });
+    // Atalho "perguntar sobre o texto copiado": anexa o trecho e já pergunta
+    const unsubClip = api.overlay.onClipboardPrompt(({ text }) => {
+      if (!text) { setError('área de transferência vazia: copie um texto antes do atalho'); return; }
+      askRef.current?.({ question: CLIPBOARD_DEFAULT_QUESTION, context: text });
     });
     const unsubProg = api.stt.onModelProgress((p) => setModelProgress(p));
 
@@ -225,15 +262,57 @@ function App() {
       unsubTrig();
       unsubCopy();
       unsubListen();
+      unsubScreen();
+      unsubClip();
       unsubProg();
       stopAllCaptures();
     };
   }, []);
 
-  // autoscroll da transcrição
+  // Rolagem automática: só acompanha a fala nova se o usuário já estiver no
+  // fim da lista. Se ele rolou para cima para reler, a tela fica parada e
+  // aparece o botão "novas falas".
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!transcript.length) return;
+    if (autoScroll && nearBottomRef.current) {
+      transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      setNewBelow(true);
+    }
   }, [transcript]);
+
+  function onTranscriptScroll(e) {
+    const el = e.currentTarget;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+    nearBottomRef.current = near;
+    if (near) setNewBelow(false);
+  }
+
+  function jumpToLatest() {
+    nearBottomRef.current = true;
+    setNewBelow(false);
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function changeAutoScroll(value) {
+    setAutoScroll(value);
+    api.settings.set('ui.autoScroll', value);
+    if (value) jumpToLatest();
+  }
+
+  // Timer da sessão: atualiza 1x por segundo enquanto escuta
+  useEffect(() => {
+    if (!listening) { setElapsedMs(0); return undefined; }
+    const tick = () => setElapsedMs(Date.now() - (sessionStartRef.current || Date.now()));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [listening]);
+
+  // Cópia pelo processo principal (funciona mesmo com o overlay sem foco)
+  function copyText(text) {
+    return api.clipboard.writeText(text).catch(() => navigator.clipboard.writeText(text));
+  }
 
   // medidores de nível de áudio (mic + sistema) enquanto escuta
   useEffect(() => {
@@ -339,51 +418,24 @@ function App() {
 
   // ================= histórico de sessões =================
 
-  async function openHistory() {
+  function openHistory() {
     setView('history');
-    setHistoryDetail(null);
-    try {
-      const sessions = await api.db.getSessions({ limit: 50 });
-      setHistorySessions(sessions || []);
-    } catch (e) {
-      setError(`histórico: ${e.message || e}`);
-    }
   }
 
-  async function openHistorySession(session) {
-    try {
-      const [transcriptions, messages] = await Promise.all([
-        api.db.getTranscriptions(session.id),
-        api.db.getMessages(session.id),
-      ]);
-      setHistoryDetail({ session, transcriptions, messages });
-    } catch (e) {
-      setError(`histórico: ${e.message || e}`);
-    }
-  }
-
-  function exportHistoryMarkdown() {
-    if (!historyDetail) return;
-    const { session, transcriptions, messages } = historyDetail;
-    const dt = new Date(session.started_at).toLocaleString('pt-BR');
-    const lines = [`# Sessão OpenPerssua — ${dt}`, ''];
-    if (transcriptions.length) {
-      lines.push('## Transcrição', '');
-      for (const t of transcriptions) {
-        lines.push(`**${t.source === 'mic' ? 'Você' : 'Reunião'}:** ${t.text}`, '');
-      }
-    }
-    const summaries = messages.filter((m) => m.content?.startsWith('[RESUMO'));
-    const answers = messages.filter((m) => !m.content?.startsWith('[RESUMO'));
-    if (summaries.length) {
-      lines.push('## Resumo', '');
-      for (const m of summaries) lines.push(m.content.replace('[RESUMO DA SESSÃO]\n', ''), '');
-    }
-    if (answers.length) {
-      lines.push('## Respostas do copiloto', '');
-      for (const m of answers) lines.push(m.content, '');
-    }
-    navigator.clipboard.writeText(lines.join('\n'));
+  // "Continuar sessão" no histórico: volta para a tela ao vivo com as falas
+  // antigas carregadas (o copiloto usa como contexto) e já começa a ouvir.
+  // As falas novas entram na mesma sessão do banco.
+  function resumeFromHistory(session, transcriptions) {
+    if (listening || starting) return;
+    const lines = transcriptions.map((t) => ({ source: t.source, text: t.text, ts: t.ts }));
+    transcriptRef.current = lines.slice(-MAX_TRANSCRIPT_LINES);
+    setTranscript(transcriptRef.current);
+    setSuggestion(null);
+    setSummary(null);
+    setResumeTarget({ id: session.id, subject: session.subject });
+    setView('live');
+    nearBottomRef.current = true;
+    toggleListening({ resumeId: session.id });
   }
 
   // ================= copiloto ativo =================
@@ -557,7 +609,10 @@ function App() {
 
   // ================= captura de áudio =================
 
-  async function toggleListening() {
+  // opts.resumeId: id de uma sessão antiga para continuar (vem do histórico).
+  // Pelo botão do microfone o argumento é o evento de clique, então só um
+  // texto em resumeId conta como pedido de retomada.
+  async function toggleListening(opts) {
     setError('');
     if (listening) {
       stopAllCaptures();
@@ -567,18 +622,29 @@ function App() {
         await api.stt.stopSession(sess.micSttId).catch(() => {});
         if (sess.sysSttId) await api.stt.stopSession(sess.sysSttId).catch(() => {});
         sessionRef.current = null;
+        // Grava o fim: é o que dá a duração da sessão no histórico
+        api.db.endSession(sess.dbId).catch(() => {});
       }
       setListening(false);
+      setResumeTarget(null);
       setLevels({ mic: 0, sys: 0 });
       summarizeSession(sess?.dbId, lines); // resumo automático em background
       return;
     }
     if (starting) return; // clique duplo durante preparo/download — ignora
+    const resumeId = typeof opts?.resumeId === 'string' ? opts.resumeId : null;
     setStarting(true);
     setModelProgress(null);
+    let dbId = null;
     try {
       setSummary(null);
-      const { id: dbId } = await api.db.createSession({ subject: 'Sessão overlay' });
+      if (resumeId) {
+        const r = await api.db.resumeSession(resumeId);
+        if (!r?.ok) throw new Error('a sessão escolhida não existe mais');
+        dbId = resumeId;
+      } else {
+        dbId = (await api.db.createSession({ subject: 'Sessão overlay' })).id;
+      }
       const { sessionId: micSttId } = await api.stt.startSession({
         source: 'mic',
         model: sttModelRef.current,
@@ -587,6 +653,7 @@ function App() {
       });
       sessionRef.current = { dbId, micSttId, sysSttId: null };
       await startMicCapture(micSttId);
+      sessionStartRef.current = Date.now();
       setListening(true);
 
       // Áudio do sistema (Discord/Zoom/Meet): best-effort — se não houver
@@ -606,7 +673,16 @@ function App() {
       }
     } catch (e) {
       stopAllCaptures();
+      // A sessão STT do mic pode ter subido antes da falha (ex.: microfone
+      // negado): encerra para não deixar o whisper-server preso a ela.
+      const failed = sessionRef.current;
+      if (failed?.micSttId) api.stt.stopSession(failed.micSttId).catch(() => {});
       sessionRef.current = null;
+      // Sessão nova que nunca chegou a ouvir sai do banco (senão o histórico
+      // enche de sessões vazias); uma retomada volta a ficar encerrada.
+      if (dbId && resumeId) api.db.endSession(dbId).catch(() => {});
+      else if (dbId) api.db.deleteSession(dbId).catch(() => {});
+      setResumeTarget(null);
       setError(`falha ao iniciar escuta: ${e.message || e}`);
     } finally {
       setStarting(false);
@@ -735,10 +811,17 @@ function App() {
 
   // ================= pergunta manual =================
 
-  async function ask() {
-    if (!question.trim() || busy) return;
+  // override { question, context } vem dos atalhos (texto copiado). Pelo
+  // botão de enviar o argumento é o evento de clique, então só um objeto com
+  // question em texto conta como override.
+  async function ask(override) {
+    const isOverride = typeof override?.question === 'string';
+    const q = isOverride ? override.question : question;
+    const context = isOverride ? override.context : attached?.text;
+    if (!q.trim() || busy) return;
     setError('');
     setAnswer('');
+    setAnswerNote(context ? `sobre o trecho copiado (${context.length} caracteres)` : '');
     setBusy(true);
     // Inscreve os listeners ANTES do invoke: o primeiro chunk pode chegar
     // antes da promise do invoke resolver (race real observado em auditoria).
@@ -762,15 +845,17 @@ function App() {
     });
     try {
       const { streamId } = await api.llm.chatStream({
-        question,
-        transcript,
+        question: q,
+        transcript: transcriptRef.current,
+        context: context || undefined,
         model: llmModelRef.current || undefined,
       });
       askStreamIdRef.current = streamId;
       await done;
       const dbId = sessionRef.current?.dbId;
       if (dbId && acc) api.db.addMessage({ sessionId: dbId, role: 'assistant', content: acc });
-      setQuestion('');
+      if (!isOverride) setQuestion('');
+      setAttached(null); // o trecho vale para uma pergunta só
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -781,7 +866,110 @@ function App() {
     }
   }
 
+  // Botão 📋: anexa o texto copiado à próxima pergunta digitada
+  async function attachClipboard() {
+    const text = String(await api.clipboard.readText().catch(() => '')).trim();
+    if (!text) { setError('área de transferência vazia: copie um texto primeiro'); return; }
+    setAttached({ text: text.slice(0, 20000) });
+  }
+
+  // ================= análise de tela =================
+
+  // Captura a tela onde o overlay está e manda para o modelo de visão. Se
+  // houver texto no campo de pergunta, ele vira a pergunta sobre a tela.
+  async function runScreenAnalysis() {
+    if (screenStreamIdRef.current || screenResult?.capturing) return;
+    setError('');
+    const q = question.trim();
+    setScreenResult({ image: null, question: q, text: '', streaming: true, capturing: true });
+
+    const shot = await api.screen.capture().catch((e) => ({ ok: false, error: String(e?.message || e) }));
+    if (!shot?.ok) {
+      setScreenResult(null);
+      setError(`captura de tela: ${shot?.error || 'falhou'}`);
+      return;
+    }
+    if (q) setQuestion('');
+    setScreenResult({ image: shot.dataUrl, question: q, text: '', streaming: true });
+
+    const streamId = crypto.randomUUID();
+    screenStreamIdRef.current = streamId;
+    screenAbortedRef.current = false;
+    let acc = '';
+    let streamErr = null;
+    let resolveDone;
+    const done = new Promise((resolve) => { resolveDone = resolve; });
+    const unsubChunk = api.llm.onStreamChunk(({ streamId: id, delta }) => {
+      if (id !== streamId) return;
+      acc += delta;
+      setScreenResult((s) => (s ? { ...s, text: acc } : s));
+    });
+    const unsubDone = api.llm.onStreamDone(({ streamId: id }) => {
+      if (id === streamId) resolveDone();
+    });
+    const unsubErr = api.llm.onStreamError(({ streamId: id, error: err }) => {
+      if (id !== streamId) return;
+      streamErr = err;
+      resolveDone();
+    });
+
+    try {
+      await api.llm.chatStream({
+        mode: 'screen',
+        streamId,
+        image: shot.dataUrl,
+        question: q,
+        transcript: transcriptRef.current,
+        profile: profileRef.current,
+        model: llmModelRef.current || undefined,
+      });
+      await done;
+      if (streamErr && !screenAbortedRef.current) setError(`análise de tela: ${streamErr}`);
+      const dbId = sessionRef.current?.dbId;
+      if (dbId && acc && !screenAbortedRef.current) {
+        api.db.addMessage({
+          sessionId: dbId,
+          role: 'assistant',
+          content: `[ANÁLISE DE TELA]${q ? ` ${q}` : ''}\n${acc}`,
+        });
+      }
+    } catch (e) {
+      setError(`análise de tela: ${e.message || e}`);
+    } finally {
+      unsubChunk();
+      unsubDone();
+      unsubErr();
+      screenStreamIdRef.current = null;
+      // Sem nenhuma resposta (erro de provedor, por exemplo) o cartão some:
+      // senão ficaria a imagem com "analisando…" parado para sempre.
+      setScreenResult((s) => (s && acc ? { ...s, streaming: false } : null));
+    }
+  }
+
+  // Dispensar o cartão também interrompe a resposta, se ainda estiver vindo
+  function dismissScreenResult() {
+    if (screenStreamIdRef.current) {
+      screenAbortedRef.current = true;
+      api.llm.abortStream(screenStreamIdRef.current);
+    }
+    setScreenResult(null);
+  }
+
+  // Atalhos globais chamam sempre a versão atual destas funções
+  useEffect(() => {
+    askRef.current = ask;
+    screenRef.current = runScreenAnalysis;
+  });
+
   // ================= UI =================
+
+  // Combinação atual de uma ação, para dicas e tooltips ("Ctrl+Shift+M")
+  function hintKey(id) {
+    const s = shortcutList.find((x) => x.id === id);
+    if (!s?.accelerator) return 'sem atalho';
+    // ⚠ = combinação em uso por outro app; troque na aba "atalhos"
+    return `${prettyAccelerator(s.accelerator)}${s.registered ? '' : ' ⚠'}`;
+  }
 
   // ---- modo mini: pílula com status + última sugestão ----
   if (compact) {
@@ -790,6 +978,7 @@ function App() {
         <div className="compact-bar">
           <button className="icon-btn" title="Expandir" onClick={toggleCompact}>▢</button>
           <span className={`status-dot ${listening ? 'on' : ''}`} />
+          {listening && <span className="compact-timer">{formatClock(elapsedMs)}</span>}
           <div className="compact-text">
             {suggestion?.text
               ? suggestion.text.slice(0, 140)
@@ -800,12 +989,12 @@ function App() {
             <button
               className="icon-btn"
               title="Copiar sugestão"
-              onClick={() => navigator.clipboard.writeText(suggestion.text)}
+              onClick={() => copyText(suggestion.text)}
             >
               ⧉
             </button>
           )}
-          <button className="icon-btn" title="Esconder (Ctrl+Shift+Space)" onClick={() => api.overlay.toggle()}>—</button>
+          <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}>—</button>
         </div>
       </div>
     );
@@ -814,56 +1003,14 @@ function App() {
   // ---- tela de histórico ----
   if (view === 'history') {
     return (
-      <div className="app">
-        <div className="header">
-          <button className="icon-btn" title="Voltar" onClick={() => { setView('live'); setHistoryDetail(null); }}>←</button>
-          <div className="logo">
-            <span className="logo-name">{historyDetail ? 'Sessão' : 'Histórico'}</span>
-          </div>
-          {historyDetail && (
-            <button className="icon-btn" title="Copiar como Markdown" onClick={exportHistoryMarkdown}>⧉</button>
-          )}
-          <button className="icon-btn" title="Esconder (Ctrl+Shift+Space)" onClick={() => api.overlay.toggle()}>—</button>
-        </div>
-
-        {!historyDetail ? (
-          <div className="history-list">
-            {historySessions.length === 0 && (
-              <div className="transcript-empty">
-                <span className="big">🕘</span>
-                Nenhuma sessão gravada ainda.
-                <br />Inicie uma escuta e ela aparecerá aqui.
-              </div>
-            )}
-            {historySessions.map((s) => (
-              <button key={s.id} className="history-item" onClick={() => openHistorySession(s)}>
-                <span className="history-date">
-                  {new Date(s.started_at).toLocaleString('pt-BR', {
-                    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-                  })}
-                </span>
-                <span className="history-subject">{s.subject || 'Sessão overlay'}</span>
-              </button>
-            ))}
-          </div>
-        ) : (
-          <div className="transcript">
-            <button className="chip history-back" onClick={() => setHistoryDetail(null)}>← todas as sessões</button>
-            {historyDetail.transcriptions.map((t, i) => (
-              <div key={i} className={`bubble ${t.source}`}>
-                <span className="who">{t.source === 'mic' ? 'Você' : 'Reunião'}</span>
-                {t.text}
-              </div>
-            ))}
-            {historyDetail.messages.map((m, i) => (
-              <div key={`m${i}`} className="answer">
-                <span className="label">✦ copiloto</span>
-                {m.content}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <HistoryView
+        onBack={() => setView('live')}
+        onResume={resumeFromHistory}
+        onError={setError}
+        copyText={copyText}
+        listening={listening || starting}
+        activeSessionId={sessionRef.current?.dbId || null}
+      />
     );
   }
 
@@ -874,18 +1021,37 @@ function App() {
           <div className="logo-mark">◆</div>
           <span className="logo-name">OpenPerssua</span>
         </div>
-        <div className={`status-pill ${listening ? 'on' : ''}`}>
+        <div className={`status-pill ${listening ? 'on' : ''}`} title={resumeTarget ? `continuando: ${resumeTarget.subject || 'sessão anterior'}` : undefined}>
           <span className="dot" />
-          {listening ? 'ouvindo' : 'parado'}
+          {listening ? `ouvindo · ${formatClock(elapsedMs)}` : 'parado'}
         </div>
         <button className="icon-btn" title="Histórico de sessões" onClick={openHistory}>🕘</button>
-        <button className={`icon-btn ${showTheme ? 'active' : ''}`} title="Aparência" onClick={() => setShowTheme(!showTheme)}>⚙</button>
+        <button className={`icon-btn ${showTheme ? 'active' : ''}`} title="Configurações" onClick={() => setShowTheme(!showTheme)}>⚙</button>
         <button className="icon-btn" title="Modo mini" onClick={toggleCompact}>▂</button>
-        <button className="icon-btn" title="Esconder (Ctrl+Shift+Space)" onClick={() => api.overlay.toggle()}>—</button>
+        <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}>—</button>
       </div>
 
       {showTheme && (
         <div className="theme-panel">
+          <div className="settings-tabs">
+            {[['aparencia', 'aparência'], ['atalhos', 'atalhos'], ['sistema', 'sistema']].map(([id, label]) => (
+              <button
+                key={id}
+                className={`settings-tab ${settingsTab === id ? 'active' : ''}`}
+                onClick={() => setSettingsTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {settingsTab === 'atalhos' && <ShortcutsPanel onChange={setShortcutList} />}
+
+          {settingsTab === 'sistema' && (
+            <SystemPanel autoScroll={autoScroll} onAutoScrollChange={changeAutoScroll} onError={setError} />
+          )}
+
+          {settingsTab === 'aparencia' && (<>
           <div className="theme-row">
             <span className="theme-label">modo</span>
             <div className="mode-pills slim">
@@ -971,6 +1137,7 @@ function App() {
               ))}
             </datalist>
           </div>
+          </>)}
         </div>
       )}
 
@@ -1042,7 +1209,7 @@ function App() {
           className={`mic-hero ${listening ? 'listening' : ''}`}
           onClick={toggleListening}
           disabled={starting}
-          title={listening ? 'Parar escuta (Ctrl+Shift+M)' : 'Iniciar escuta (Ctrl+Shift+M)'}
+          title={`${listening ? 'Parar' : 'Iniciar'} escuta (${hintKey('toggle-listen')})`}
         >
           {starting ? '⏳' : listening ? '⏹' : '🎙'}
         </button>
@@ -1067,7 +1234,9 @@ function App() {
               : 'preparando…'}
           </span>
         ) : (
-          <span className="hero-label">toque para ouvir a reunião</span>
+          <span className="hero-label">
+            {resumeTarget ? 'retomando a sessão…' : 'toque para ouvir a reunião'}
+          </span>
         )}
       </div>
 
@@ -1079,7 +1248,7 @@ function App() {
             <span className="label">✦ resumo da sessão{summary.streaming ? '…' : ''}</span>
             <div className="sug-actions">
               <button
-                onClick={() => navigator.clipboard.writeText(summary.text)}
+                onClick={() => copyText(summary.text)}
                 disabled={!summary.text}
                 title="Copiar resumo"
               >
@@ -1101,9 +1270,9 @@ function App() {
             </span>
             <div className="sug-actions">
               <button
-                onClick={() => navigator.clipboard.writeText(suggestion.text)}
+                onClick={() => copyText(suggestion.text)}
                 disabled={!suggestion.text}
-                title="Copiar sugestão"
+                title={`Copiar sugestão (${hintKey('copy-suggestion')})`}
               >
                 copiar
               </button>
@@ -1128,14 +1297,45 @@ function App() {
         </div>
       )}
 
-      <div className="transcript">
-        {transcript.length === 0 && !answer && !suggestion && !summary && (
+      {screenResult && (
+        <div className="suggestion screen-card">
+          <div className="sug-head">
+            <span className="label">
+              ✦ análise da tela{screenResult.streaming ? '…' : ''}
+            </span>
+            <div className="sug-actions">
+              <button
+                onClick={() => copyText(screenResult.text)}
+                disabled={!screenResult.text}
+                title="Copiar análise"
+              >
+                copiar
+              </button>
+              <button onClick={dismissScreenResult} title="Dispensar">✕</button>
+            </div>
+          </div>
+          {screenResult.image && (
+            <img className="screen-thumb" src={screenResult.image} alt="captura analisada" />
+          )}
+          {screenResult.question && <div className="sug-question">“{screenResult.question}”</div>}
+          <div className="sug-text">
+            {screenResult.text || (screenResult.capturing ? 'capturando a tela…' : 'analisando…')}
+          </div>
+        </div>
+      )}
+
+      <div className="transcript" ref={transcriptBoxRef} onScroll={onTranscriptScroll}>
+        {transcript.length === 0 && !answer && !suggestion && !summary && !screenResult && (
           <div className="transcript-empty">
             <span className="big">✦</span>
             A transcrição da conversa aparece aqui.
             <br />No modo <b>Entrevista</b> com ⚡ auto ligado, o copiloto
             <br />rascunha sua resposta enquanto o entrevistador ainda fala.
-            <br /><span className="hint">Ctrl+Shift+M ouvir · Enter sugerir · C/Y copiar</span>
+            <br />
+            <span className="hint">
+              {hintKey('toggle-listen')} ouvir · {hintKey('assist')} sugerir · {hintKey('copy-suggestion')} copiar
+              <br />{hintKey('screenshot')} analisar tela · {hintKey('clipboard-prompt')} perguntar sobre texto copiado
+            </span>
           </div>
         )}
         {transcript.map((t, i) => (
@@ -1147,10 +1347,21 @@ function App() {
         <div ref={transcriptEndRef} />
       </div>
 
+      {newBelow && (
+        <button className="chip new-below" onClick={jumpToLatest}>↓ novas falas</button>
+      )}
+
       {answer && (
         <div className="answer">
-          <span className="label">✦ resposta</span>
+          <span className="label">✦ resposta{answerNote ? ` · ${answerNote}` : ''}</span>
           {answer}
+        </div>
+      )}
+
+      {attached && (
+        <div className="attached-chip" title={attached.text.slice(0, 400)}>
+          <span>📋 trecho anexado · {attached.text.length} caracteres</span>
+          <button className="mini-link" onClick={() => setAttached(null)} title="Remover o trecho">✕</button>
         </div>
       )}
 
@@ -1159,15 +1370,30 @@ function App() {
           className="assist-btn"
           onClick={() => runAssist(lastQuestionRef.current || '')}
           disabled={busy || suggestion?.streaming}
-          title="Sugerir o que dizer agora (Ctrl+Shift+Enter)"
+          title={`Sugerir o que dizer agora (${hintKey('assist')})`}
         >
           ✦
+        </button>
+        <button
+          className="tool-btn"
+          onClick={runScreenAnalysis}
+          disabled={Boolean(screenResult?.streaming)}
+          title={`Analisar a tela (${hintKey('screenshot')}). O texto digitado vira a pergunta.`}
+        >
+          📷
+        </button>
+        <button
+          className={`tool-btn ${attached ? 'active' : ''}`}
+          onClick={attachClipboard}
+          title={`Anexar o texto copiado à pergunta (atalho direto: ${hintKey('clipboard-prompt')})`}
+        >
+          📋
         </button>
         <input
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && ask()}
-          placeholder="Pergunte sobre a reunião…"
+          placeholder={attached ? 'O que você quer saber sobre o trecho?' : 'Pergunte sobre a reunião…'}
         />
         <button className="send-btn" onClick={ask} disabled={busy || !question.trim()}>
           {busy ? '…' : '↑'}

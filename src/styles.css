@@ -891,3 +891,202 @@ html, body, #root {
   white-space: nowrap;
 }
 .history-back { align-self: flex-start; flex-shrink: 0; }
+
+/* ============================================================
+   v0.3.0 — sessões, atalhos, sistema, tela e texto copiado
+   ============================================================ */
+
+/* timer na pílula de status e no modo mini */
+.status-pill { font-variant-numeric: tabular-nums; }
+.compact-timer {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--rec);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* botão de texto pequeno (ações discretas) */
+.mini-link {
+  -webkit-app-region: no-drag;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s;
+  white-space: nowrap;
+}
+.mini-link:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.mini-link:disabled { opacity: 0.35; cursor: default; }
+.mini-link.danger:hover:not(:disabled) { color: var(--danger); }
+.mini-link.armed { color: var(--danger); background: rgba(255, 123, 114, 0.12); font-weight: 700; }
+
+.inline-status { font-size: 10.5px; color: var(--mint); }
+
+/* ---------- abas do painel de configurações ---------- */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.settings-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.settings-tab:hover { color: var(--text); }
+.settings-tab.active { color: var(--mint); background: var(--mint-soft); }
+
+/* ---------- atalhos ---------- */
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 230px;
+  overflow-y: auto;
+}
+.shortcut-row { display: flex; align-items: center; gap: 8px; }
+.shortcut-info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.shortcut-label { font-size: 11.5px; color: var(--text); }
+.shortcut-feedback { font-size: 10px; color: var(--mint); }
+.shortcut-feedback.error { color: var(--danger); }
+.shortcut-actions { display: flex; gap: 2px; width: 74px; justify-content: flex-end; flex-shrink: 0; }
+.kbd {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--text);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 7px;
+  padding: 3px 8px;
+  cursor: pointer;
+  min-width: 110px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.kbd:hover { border-color: var(--mint); }
+.kbd.recording { border-color: var(--mint); color: var(--mint); animation: pulse 1.2s ease-in-out infinite; }
+.kbd.warn { border-color: rgba(255, 123, 114, 0.6); }
+
+/* ---------- histórico com ações ---------- */
+.history-stats {
+  padding: 0 14px 6px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.history-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.history-meta { font-size: 10px; color: var(--text-dim); opacity: 0.85; }
+.history-actions { display: flex; gap: 2px; flex-shrink: 0; opacity: 0.55; transition: opacity 0.13s; }
+.history-item:hover .history-actions, .history-item:focus-within .history-actions { opacity: 1; }
+.history-more { align-self: center; margin-top: 4px; }
+.history-footer {
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.title-input {
+  background: var(--surface);
+  border: 1px solid var(--mint);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+  width: 100%;
+  user-select: text;
+}
+.detail-head {
+  padding: 0 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.detail-title {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+.detail-title .pencil { font-size: 11px; color: var(--text-dim); opacity: 0; transition: opacity 0.13s; }
+.detail-title:hover .pencil { opacity: 1; }
+.detail-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.chip:disabled { opacity: 0.4; cursor: default; }
+.chip:disabled:hover { color: var(--text-dim); border-color: var(--border); }
+
+/* ---------- rolagem: aviso de falas novas ---------- */
+.new-below {
+  align-self: center;
+  margin: -34px 0 8px;
+  z-index: 2;
+  background: var(--bg);
+  border-color: var(--mint);
+  color: var(--mint);
+  flex-shrink: 0;
+}
+
+/* ---------- composer: tela e texto copiado ---------- */
+.tool-btn {
+  width: 32px; height: 38px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 14px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: border-color 0.13s, transform 0.12s, opacity 0.15s;
+}
+.tool-btn:hover:not(:disabled) { border-color: var(--mint); transform: scale(1.05); }
+.tool-btn:disabled { opacity: 0.4; cursor: default; }
+.tool-btn.active { border-color: var(--lilac); background: var(--lilac-soft); }
+
+.attached-chip {
+  margin: 0 14px 6px;
+  padding: 5px 6px 5px 11px;
+  border-radius: 99px;
+  background: var(--lilac-soft);
+  border: 1px solid rgba(139, 124, 246, 0.4);
+  font-size: 10.5px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ---------- análise de tela ---------- */
+.screen-card { max-height: 300px; overflow-y: auto; }
+.screen-thumb {
+  display: block;
+  width: 100%;
+  max-height: 110px;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}

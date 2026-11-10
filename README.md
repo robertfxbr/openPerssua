@@ -48,8 +48,27 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
   entrevistador ainda está falando. Se a pergunta crescer, o rascunho é
   abortado e recomeçado com o texto completo (debounce de 1,4s), então a
   resposta final costuma estar pronta antes de ele terminar de perguntar
-- **Atalhos globais de ação**: `Ctrl+Shift+Enter` sugere resposta,
-  `Ctrl+Shift+C`/`Y` copia a última sugestão — sem tirar o foco da chamada
+- **Atalhos globais configuráveis** (aba "atalhos" nas configurações): grave
+  outra combinação, desative ou volte ao padrão. Combinação já usada por outro
+  app aparece com ⚠. Padrões, todos sem tirar o foco da chamada:
+
+  | Ação | Padrão |
+  |---|---|
+  | Mostrar/ocultar o overlay | `Ctrl+Shift+Space` |
+  | Ligar/desligar a escuta | `Ctrl+Shift+M` |
+  | Sugerir o que dizer agora | `Ctrl+Shift+Enter` |
+  | Copiar a última sugestão | `Ctrl+Shift+C` (ou `Y` se o C estiver ocupado) |
+  | Analisar a tela | `Ctrl+Shift+X` |
+  | Perguntar sobre o texto copiado | `Ctrl+Shift+K` |
+  | Mover para o próximo monitor | `Ctrl+Alt+→` |
+
+- **Análise de tela** (botão 📷 ou atalho): captura o monitor onde o overlay
+  está (o overlay some na hora da foto) e manda para um modelo de visão.
+  Texto digitado no campo vira a pergunta sobre a tela. Funciona com OpenAI,
+  ChatGPT, Claude API e modelos de visão no Ollama; o Claude Code CLI não
+  recebe imagens e avisa isso
+- **Texto copiado como pergunta**: o botão 📋 anexa o que está na área de
+  transferência à próxima pergunta; o atalho pergunta direto sobre o trecho
 - **Resumo automático** ao encerrar a escuta (decisões, ações, pendências),
   salvo na sessão em SQLite
 - **VAD por fim de fala** (energy-based, AudioWorklet em thread dedicada):
@@ -61,7 +80,16 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
   próprios e jargões; o campo "vocabulário" das configurações soma termos
   seus (empresa, equipe, produto) com prioridade máxima
 - **Histórico de sessões** com transcrição, respostas do copiloto e
-  exportação em Markdown
+  exportação em Markdown. Renomear, excluir (com confirmação), limpar tudo,
+  duração e contagem de falas por sessão, e **continuar uma sessão antiga**:
+  as falas anteriores voltam como contexto e as novas entram na mesma sessão
+- **Timer da sessão** na pílula de status e no modo mini
+- **Rolagem inteligente da transcrição**: acompanha a fala nova só se você já
+  está no fim; se rolou para cima para reler, aparece "↓ novas falas"
+- **Multi-monitor**: escolha o monitor do overlay na aba "sistema", pelo
+  atalho ou pelo menu da bandeja (a posição relativa é mantida)
+- **Logs de debug**: copiar o trecho recente ou abrir a pasta, pela aba
+  "sistema" ou pela bandeja
 - **Refresh token OAuth** do ChatGPT: o login não expira mais a cada sessão
 - **Modo mini** (pílula compacta com a sugestão ao vivo), **medidores de
   áudio** mic/sistema, **temas** (escuro/claro, 3 acentos, opacidade, fonte)
@@ -86,16 +114,21 @@ Pré-requisitos conforme o provedor escolhido:
 
 ```
 electron/
-  main.js                  bootstrap + atalho global
+  main.js                  bootstrap + bandeja + ações dos atalhos
   preload.js               contextBridge com allowlist
   windows/OverlayWindow.js overlay always-on-top / click-through
+  shortcuts/               atalhos globais configuráveis
+  system/                  monitores, captura de tela, logs
   stt/WhisperService.js    whisper.cpp server + sessões + cap de buffer
   llm/LLMRouter.js         seleção de provedor
+  llm/messageFormat.js     mensagens com imagem no formato de cada API
   llm/providers/           OpenAI, ChatGPT OAuth, Claude, Claude Code, Ollama
   db/                      better-sqlite3 + schema.sql
-  prompts/meeting.js       copiloto + resumo (anti prompt-injection)
+  prompts/                 copiloto, resumo e análise de tela (anti prompt-injection)
   ipc/index.js             handlers por domínio
 src/main.jsx               UI do overlay (React)
+src/history/               tela de histórico
+src/panels/                abas "atalhos" e "sistema" das configurações
 ```
 
 ## Gerando o instalador (Windows)

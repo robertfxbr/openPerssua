@@ -3,7 +3,7 @@
 // flavors whitelabel, telemetria e updater). Aqui: overlay + tray.
 
 const path = require('path');
-const { app, globalShortcut, session, Tray, Menu, nativeImage } = require('electron');
+const { app, clipboard, session, Tray, Menu, nativeImage } = require('electron');
 const log = require('electron-log');
 
 // Captura de áudio do sistema (loopback: Discord/Zoom/Meet) — o plugin
@@ -11,15 +11,25 @@ const log = require('electron-log');
 const { initMain: initAudioLoopback } = require('electron-audio-loopback');
 initAudioLoopback();
 
-const { createOverlayWindow, getOverlayWindow, toggleOverlay } = require('./windows/OverlayWindow');
+const {
+  createOverlayWindow, getOverlayWindow, toggleOverlay, repaintOverlay, persistWindowState,
+} = require('./windows/OverlayWindow');
 const { registerIpc, disposeIpc } = require('./ipc');
 const { DatabaseManager } = require('./db/DatabaseManager');
+const { SettingsStore } = require('./settings/SettingsStore');
+const { ShortcutManager } = require('./shortcuts/ShortcutManager');
+const { moveToNextDisplay } = require('./system/displays');
+const { openLogsFolder } = require('./system/logs');
 
 const isDev = process.argv.includes('--dev');
 log.initialize();
 
+// Texto copiado maior que isso é cortado antes de ir ao overlay
+const MAX_CLIPBOARD_CHARS = 20000;
+
 let db = null;
 let tray = null;
+let shortcuts = null;
 
 // Sem este handler, o Electron NEGA getUserMedia por padrão em apps empacotados
 // e o microfone falha silenciosamente no renderer.
@@ -31,12 +41,30 @@ function configurePermissions() {
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 }
 
+// Mostra o overlay (sem roubar foco) e avisa o renderer de uma ação de atalho
+function sendToOverlay(channel, payload) {
+  const win = getOverlayWindow();
+  if (win && !win.webContents.isDestroyed()) {
+    if (!win.isVisible()) win.showInactive();
+    win.webContents.send(channel, payload);
+  }
+}
+
+function moveOverlayToNextDisplay() {
+  const r = moveToNextDisplay(getOverlayWindow());
+  if (r.ok) { repaintOverlay(); persistWindowState(); }
+  return r;
+}
+
 function createTray() {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
   tray.setToolTip('OpenPerssua');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Mostrar/Ocultar (Ctrl+Shift+Space)', click: () => toggleOverlay(isDev) },
+    { label: 'Mostrar/Ocultar', click: () => toggleOverlay(isDev) },
+    { label: 'Mover para o próximo monitor', click: () => moveOverlayToNextDisplay() },
+    { type: 'separator' },
+    { label: 'Abrir pasta de logs', click: () => openLogsFolder() },
     { type: 'separator' },
     { label: 'Sair', click: () => app.quit() },
   ]));
@@ -51,34 +79,32 @@ async function bootstrap() {
   db = new DatabaseManager(app.getPath('userData'));
   db.initialize();
 
+  const settingsStore = new SettingsStore(app.getPath('userData'));
+
+  // Ações dos atalhos globais. Em entrevista ou reunião o usuário não pode
+  // ficar clicando no overlay: tudo funciona sem focar a janela.
+  shortcuts = new ShortcutManager({
+    settingsStore,
+    handlers: {
+      'toggle-overlay': () => toggleOverlay(isDev),
+      'toggle-listen': () => sendToOverlay('overlay:toggle-listen'),
+      assist: () => sendToOverlay('overlay:assist-trigger'),
+      'copy-suggestion': () => sendToOverlay('overlay:copy-suggestion'),
+      screenshot: () => sendToOverlay('overlay:screenshot-trigger'),
+      // O texto é lido aqui no main: o renderer sem foco nem sempre consegue
+      // ler a área de transferência.
+      'clipboard-prompt': () => {
+        const text = clipboard.readText().trim().slice(0, MAX_CLIPBOARD_CHARS);
+        sendToOverlay('overlay:clipboard-prompt', { text });
+      },
+      'next-display': () => moveOverlayToNextDisplay(),
+    },
+  });
+
   createOverlayWindow({ isDev });
-  registerIpc({ db, getOverlayWindow, isDev });
+  registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts });
   createTray();
-
-  const ok = globalShortcut.register('CommandOrControl+Shift+Space', () => toggleOverlay(isDev));
-  if (!ok) log.warn('atalho global Ctrl+Shift+Space não registrado (em uso por outro app?)');
-
-  // Atalhos de ação — em entrevista real o usuário não pode ficar clicando
-  // no overlay: ✦ sugerir agora / copiar última sugestão sem focar a janela.
-  const sendToOverlay = (channel) => {
-    const win = getOverlayWindow();
-    if (win && !win.webContents.isDestroyed()) {
-      if (!win.isVisible()) win.show();
-      win.webContents.send(channel);
-    }
-  };
-  if (!globalShortcut.register('CommandOrControl+Shift+Enter', () => sendToOverlay('overlay:assist-trigger'))) {
-    log.warn('atalho Ctrl+Shift+Enter não registrado');
-  }
-  // Liga/desliga a escuta sem focar a janela
-  if (!globalShortcut.register('CommandOrControl+Shift+M', () => sendToOverlay('overlay:toggle-listen'))) {
-    log.warn('atalho Ctrl+Shift+M não registrado');
-  }
-  // Ctrl+Shift+C costuma estar em uso (terminal, outros copilotos) — tenta fallback
-  if (!globalShortcut.register('CommandOrControl+Shift+C', () => sendToOverlay('overlay:copy-suggestion'))
-    && !globalShortcut.register('CommandOrControl+Shift+Y', () => sendToOverlay('overlay:copy-suggestion'))) {
-    log.warn('atalhos de copiar sugestão não registrados (C e Y ocupados)');
-  }
+  await shortcuts.init();
 
   app.on('before-quit', () => {
     disposeIpc(); // encerra whisper-server e streams ativas
@@ -86,7 +112,7 @@ async function bootstrap() {
   });
 }
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => shortcuts?.dispose());
 
 // App residente: fechar o overlay não encerra — sai pelo tray ou Cmd+Q.
 app.on('window-all-closed', () => { /* intencionalmente vazio */ });

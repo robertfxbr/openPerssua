@@ -99,4 +99,31 @@ function setClickThrough(enabled) {
   if (win) win.setIgnoreMouseEvents(enabled, { forward: true });
 }
 
-module.exports = { createOverlayWindow, getOverlayWindow, toggleOverlay, setClickThrough, setCompactMode };
+// Bug conhecido do Electron no Windows: janela transparente não repinta
+// após resize ou mudança de monitor programática. invalidate força a
+// repintura, e o ciclo opacity 0.99 -> 1 derruba o cache de superfície do DWM.
+function repaintOverlay(win = getOverlayWindow()) {
+  setTimeout(() => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.invalidate();
+    win.setOpacity(0.99);
+    setTimeout(() => { if (!win.isDestroyed()) win.setOpacity(1); }, 40);
+  }, 80);
+}
+
+// Movimentos feitos pelo código (trocar de monitor) não disparam 'moved'
+// no Windows, então a posição nova é salva explicitamente.
+function persistWindowState() {
+  const win = getOverlayWindow();
+  if (win) saveWindowState(win);
+}
+
+module.exports = {
+  createOverlayWindow,
+  getOverlayWindow,
+  toggleOverlay,
+  setClickThrough,
+  setCompactMode,
+  repaintOverlay,
+  persistWindowState,
+};

@@ -1,6 +1,6 @@
 {
   "name": "openperssua",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "Open-source desktop AI meeting copilot overlay — pluggable LLM backends (OpenAI API, ChatGPT subscription via OAuth, Claude API, Claude Code CLI, Ollama). Portfolio reimplementation based on public behavior analysis.",
   "license": "MIT",
   "main": "electron/main.js",

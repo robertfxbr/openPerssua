@@ -21,6 +21,26 @@ contextBridge.exposeInMainWorld('openperssua', {
     onAssistTrigger: (cb) => on('overlay:assist-trigger', cb),
     onCopySuggestion: (cb) => on('overlay:copy-suggestion', cb),
     onToggleListen: (cb) => on('overlay:toggle-listen', cb),
+    onScreenshotTrigger: (cb) => on('overlay:screenshot-trigger', cb),
+    onClipboardPrompt: (cb) => on('overlay:clipboard-prompt', cb),
+    listDisplays: () => invoke('overlay:list-displays'),
+    moveToDisplay: (displayId) => invoke('overlay:move-to-display', displayId),
+  },
+  screen: {
+    capture: () => invoke('screen:capture'),
+  },
+  clipboard: {
+    readText: () => invoke('clipboard:read-text'),
+    writeText: (text) => invoke('clipboard:write-text', text),
+  },
+  logs: {
+    openFolder: () => invoke('logs:open-folder'),
+    copyRecent: () => invoke('logs:copy-recent'),
+  },
+  shortcuts: {
+    list: () => invoke('shortcuts:list'),
+    set: (id, accelerator) => invoke('shortcuts:set', { id, accelerator }),
+    suspend: (enabled) => invoke('shortcuts:suspend', enabled),
   },
   audio: {
     // electron-audio-loopback: habilita/desabilita o override do getDisplayMedia
@@ -57,6 +77,12 @@ contextBridge.exposeInMainWorld('openperssua', {
     getSessions: (page) => invoke('db:get-sessions-page', page),
     getMessages: (sessionId) => invoke('db:get-messages', sessionId),
     getTranscriptions: (sessionId) => invoke('db:get-transcriptions', sessionId),
+    endSession: (sessionId) => invoke('db:end-session', sessionId),
+    resumeSession: (sessionId) => invoke('db:resume-session', sessionId),
+    updateSubject: (sessionId, subject) => invoke('db:update-subject', { id: sessionId, subject }),
+    deleteSession: (sessionId) => invoke('db:delete-session', sessionId),
+    clearAll: () => invoke('db:clear-all'),
+    getStats: () => invoke('db:get-stats'),
   },
   settings: {
     get: (key) => invoke('settings:get', key),
