@@ -1,5 +1,5 @@
 // Teste E2E do loopback de áudio do sistema, rodando dentro do Electron:
-//   OpenPerssua.exe scripts/test-loopback.js
+//   Teka.exe scripts/test-loopback.js
 // 1. Toca samples/jfk.wav pelos alto-falantes (SoundPlayer do Windows)
 // 2. Captura o áudio do SISTEMA via electron-audio-loopback (getDisplayMedia)
 // 3. Grava 12s em loopback-capture.wav

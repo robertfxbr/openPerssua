@@ -8,7 +8,10 @@ const crypto = require('crypto');
 
 class DatabaseManager {
   constructor(userDataDir) {
-    this.dbPath = path.join(userDataDir, 'openperssua.db');
+    // Instalações da época do nome OpenPerssua mantêm o arquivo antigo
+    const legacy = path.join(userDataDir, 'openperssua.db');
+    const current = path.join(userDataDir, 'teka.db');
+    this.dbPath = fs.existsSync(legacy) && !fs.existsSync(current) ? legacy : current;
     this.db = null;
   }
 

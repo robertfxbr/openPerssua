@@ -1,6 +1,6 @@
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-$exe = "$env:LOCALAPPDATA\Programs\OpenPerssua\OpenPerssua.exe"
-Get-Process -Name OpenPerssua -ErrorAction SilentlyContinue | Stop-Process -Force
+$exe = "$env:LOCALAPPDATA\Programs\Teka\Teka.exe"
+Get-Process -Name Teka -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep 1
 $app = Start-Process $exe -PassThru
 Start-Sleep 6

@@ -1,7 +1,8 @@
 {
-  "name": "openperssua",
-  "version": "0.3.0",
-  "description": "Open-source desktop AI meeting copilot overlay — pluggable LLM backends (OpenAI API, ChatGPT subscription via OAuth, Claude API, Claude Code CLI, Ollama). Portfolio reimplementation based on public behavior analysis.",
+  "name": "teka",
+  "productName": "Teka",
+  "version": "0.4.0",
+  "description": "Open-source desktop AI meeting copilot overlay. Works with the LLM you already have, no extra API bill: ChatGPT login, Claude Code CLI, Codex CLI, Gemini CLI, Ollama or a local server (paid APIs optional). Portfolio reimplementation based on public behavior analysis.",
   "license": "MIT",
   "main": "electron/main.js",
   "scripts": {
@@ -12,8 +13,8 @@
     "dist:win": "npm run build && node build-installer.js"
   },
   "build": {
-    "appId": "com.openperssua.app",
-    "productName": "OpenPerssua",
+    "appId": "com.teka.app",
+    "productName": "Teka",
     "directories": {
       "output": "release"
     },
@@ -41,7 +42,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "OpenPerssua"
+      "shortcutName": "Teka"
     }
   },
   "dependencies": {

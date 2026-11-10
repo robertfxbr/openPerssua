@@ -1,7 +1,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 /* ============================================================
-   OpenPerssua — identidade "Aurora"
+   Teka — identidade "Aurora"
    Inspirado no overlay escuro do Perssua (#1a1a1e + vidro),
    mas com identidade própria: base tint violeta-escura,
    acento menta-aurora + lilás, hero mic com waveform animado.
@@ -1090,3 +1090,114 @@ html, body, #root {
   border: 1px solid var(--border);
   margin-bottom: 8px;
 }
+
+/* ---------- v0.4.0: IA, assistentes, voz, diagnóstico, atualização ---------- */
+.theme-panel { max-height: 56vh; overflow-y: auto; }
+.settings-tabs { flex-wrap: wrap; }
+.panel-section {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--lilac);
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.panel-section:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.panel-note { font-size: 10.5px; color: var(--text-dim); line-height: 1.45; }
+
+.select-wrap.grow { flex: 1; }
+.select-wrap.small { flex: 0 1 auto; }
+.select-wrap.small select { padding: 5px 24px 5px 9px; font-size: 11px; border-radius: 9px; }
+.select-wrap.small::after { right: 8px; font-size: 9px; }
+.model-input.small { padding: 5px 8px; font-size: 11px; }
+
+.task-row { display: flex; align-items: center; gap: 6px; }
+.task-label { font-size: 10.5px; color: var(--text-dim); width: 92px; flex-shrink: 0; }
+.task-row .select-wrap.small { width: 108px; flex-shrink: 0; }
+.task-row .select-wrap.small select { width: 100%; }
+
+.memory-view {
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  background: var(--surface);
+  border-radius: 9px;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow-y: auto;
+  user-select: text;
+}
+
+/* assistentes e modelos do Whisper: listas de linhas clicáveis */
+.assistant-list, .model-list { display: flex; flex-direction: column; gap: 4px; }
+.assistant-row, .model-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+}
+.assistant-row.active, .model-row.active { border-color: var(--mint); background: var(--mint-soft); }
+.assistant-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 0;
+}
+.model-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.assistant-name { font-size: 12px; font-weight: 600; }
+.assistant-editor { display: flex; flex-direction: column; gap: 8px; }
+.assistant-editor .profile-editor { margin: 0; }
+.profile-row .select-wrap.small select { max-width: 170px; }
+
+/* diagnóstico */
+.diag { display: flex; flex-direction: column; gap: 6px; }
+.diag-row { display: flex; align-items: baseline; gap: 7px; font-size: 11.5px; }
+.diag-icon { width: 14px; text-align: center; font-weight: 700; color: var(--text-dim); flex-shrink: 0; }
+.diag-label { width: 104px; flex-shrink: 0; font-weight: 600; }
+.diag-detail { flex: 1; min-width: 0; color: var(--text-dim); font-size: 10.5px; line-height: 1.4; }
+.diag-row.ok .diag-icon { color: var(--mint); }
+.diag-row.warn .diag-icon { color: #fbbf24; }
+.diag-row.fail .diag-icon, .diag-row.fail .diag-detail { color: var(--danger); }
+.diag .chip { align-self: flex-start; }
+.ob-card .diag { margin: 4px 0; }
+
+/* aviso de versão nova */
+.update-banner {
+  margin: 0 14px 10px;
+  padding: 8px 11px;
+  border-radius: 11px;
+  background: var(--mint-soft);
+  border: 1px solid var(--mint);
+  font-size: 11.5px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.update-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+/* tradução embaixo da fala original */
+.bubble .translation {
+  display: block;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.answer .copy-doc { display: block; margin-top: 6px; }

@@ -1,13 +1,14 @@
 // Registro central de handlers IPC — 1 domínio por bloco.
 // Os nomes de canais seguem o padrão observado no original (domínio:ação).
 
-const { ipcMain, app, clipboard } = require('electron');
+const { ipcMain, app, clipboard, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-const { LLMRouter } = require('../llm/LLMRouter');
+const { LLMRouter, TASKS } = require('../llm/LLMRouter');
 const { WhisperService } = require('../stt/WhisperService');
+const { isSecret, MASK } = require('../settings/SettingsStore');
 const { TokenStore } = require('../llm/providers/ChatGPTOAuthAdapter');
 const {
   setClickThrough, toggleOverlay, setCompactMode, repaintOverlay, persistWindowState,
@@ -15,6 +16,10 @@ const {
 const { buildCopilotMessages, buildSummaryMessages } = require('../prompts/meeting');
 const { buildAssistMessages } = require('../prompts/assist');
 const { buildScreenMessages } = require('../prompts/screen');
+const {
+  buildFollowupMessages, buildCompactMessages, buildTranslateMessages, buildPingMessages,
+} = require('../prompts/followup');
+const updater = require('../system/updater');
 const { listDisplays, moveToDisplay } = require('../system/displays');
 const { openLogsFolder, copyRecentLogs } = require('../system/logs');
 const { captureScreen } = require('../system/screenshot');
@@ -22,31 +27,60 @@ const { captureScreen } = require('../system/screenshot');
 // Trecho colado muito grande estoura o contexto de modelos menores
 const MAX_CONTEXT_CHARS = 20000;
 
+const text = (v, max) => (typeof v === 'string' ? v.slice(0, max) : undefined);
+
 function buildMessages(req) {
-  if (req.mode === 'summary') return buildSummaryMessages({ transcript: req.transcript });
-  if (req.mode === 'screen') {
-    return buildScreenMessages({
-      image: req.image,
-      question: req.question,
-      transcript: req.transcript,
-      profile: req.profile,
-    });
+  const memory = text(req.memory, 8000);
+  const assistant = text(req.assistant, 4000);
+  switch (req.mode) {
+    case 'summary':
+      return buildSummaryMessages({ transcript: req.transcript, memory });
+    case 'email':
+      return buildFollowupMessages({
+        transcript: req.transcript, memory, summary: text(req.summary, 8000), assistant,
+      });
+    case 'compact':
+      return buildCompactMessages({ memory, transcript: req.transcript });
+    case 'translate':
+      return buildTranslateMessages({ text: req.text, target: req.target });
+    case 'ping':
+      return buildPingMessages();
+    case 'screen':
+      return buildScreenMessages({
+        image: req.image,
+        question: req.question,
+        transcript: req.transcript,
+        profile: req.profile,
+        memory,
+        assistant,
+      });
+    case 'assist':
+      return buildAssistMessages({
+        transcript: req.transcript,
+        question: req.question,
+        mode: req.assistMode,
+        profile: req.profile,
+        instruction: req.instruction,
+        memory,
+        assistant,
+      });
+    default:
+      return buildCopilotMessages({
+        transcript: req.transcript,
+        question: req.question,
+        extraContext: text(req.context, MAX_CONTEXT_CHARS),
+        memory,
+        assistant,
+      });
   }
-  if (req.mode === 'assist') {
-    return buildAssistMessages({
-      transcript: req.transcript,
-      question: req.question,
-      mode: req.assistMode,
-      profile: req.profile,
-      instruction: req.instruction,
-    });
-  }
-  return buildCopilotMessages({
-    transcript: req.transcript,
-    question: req.question,
-    extraContext: typeof req.context === 'string' ? req.context.slice(0, MAX_CONTEXT_CHARS) : undefined,
-  });
 }
+
+// Qual configuração de "modelo por tarefa" vale para cada modo
+const TASK_OF_MODE = {
+  assist: 'assist', summary: 'summary', email: 'summary', compact: 'summary',
+  screen: 'screen', translate: 'translate',
+};
+const taskFor = (req) => TASK_OF_MODE[req.mode] || 'chat';
 
 // Streams LLM ativos, abortáveis pelo renderer (padrão `*:abort-stream`)
 const activeStreams = new Map();
@@ -143,6 +177,28 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   });
   ipcMain.handle('shortcuts:suspend', (_e, enabled) => shortcuts.suspend(enabled));
 
+  // ---- modelos do Whisper ----
+  ipcMain.handle('stt:list-models', () => whisper.listModels());
+  ipcMain.handle('stt:download-model', async (_e, name) => {
+    try {
+      const r = await whisper.downloadModel(name, (p) => sendToOverlay('stt:model-progress', p));
+      return { ok: true, cached: r.cached };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+  ipcMain.handle('stt:cancel-download', (_e, name) => whisper.cancelDownload(name));
+  ipcMain.handle('stt:delete-model', (_e, name) => {
+    try { return whisper.deleteModel(name); } catch (err) { return { ok: false, error: String(err.message || err) }; }
+  });
+  // Diagnóstico: binário presente e modelo escolhido já baixado
+  ipcMain.handle('stt:check', (_e, name) => {
+    const { binary } = whisper.findBinary();
+    let modelInstalled = false;
+    try { modelInstalled = whisper.isInstalled(name); } catch { /* nome fora do catálogo */ }
+    return { binary: Boolean(binary), modelInstalled };
+  });
+
   // ---- STT ----
   ipcMain.handle('stt:start-session', (_e, opts) =>
     whisper.startSession({
@@ -157,8 +213,26 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
 
   // ---- LLM ----
   ipcMain.handle('llm:list-providers', () => router.listProviders());
+  ipcMain.handle('llm:list-tasks', () => TASKS);
   ipcMain.handle('llm:chat', async (_e, req) => {
-    return router.chat({ messages: buildMessages(req), model: req.model });
+    return router.chat({ messages: buildMessages(req), model: req.model, task: taskFor(req) });
+  });
+  // Diagnóstico: mede se o provedor principal responde e em quanto tempo
+  ipcMain.handle('llm:test', async () => {
+    const t0 = Date.now();
+    try {
+      const reply = await router.chat({ messages: buildPingMessages(), task: 'chat' });
+      return { ok: true, ms: Date.now() - t0, reply: String(reply || '').slice(0, 80) };
+    } catch (err) {
+      return { ok: false, ms: Date.now() - t0, error: String(err.message || err).slice(0, 300) };
+    }
+  });
+  // Abre a página de criar API key de um provedor (só endereços conhecidos)
+  ipcMain.handle('llm:open-key-page', async (_e, providerId) => {
+    const p = (await router.listProviders()).find((x) => x.id === providerId);
+    if (!p?.keyUrl || !p.keyUrl.startsWith('https://')) return { ok: false };
+    await shell.openExternal(p.keyUrl);
+    return { ok: true };
   });
   ipcMain.handle('llm:chat-stream', async (event, req) => {
     // O renderer pode escolher o id: assim ele filtra os chunks pelo id certo
@@ -176,6 +250,7 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
     router.chatStream({
       messages: buildMessages(req),
       model: req.model,
+      task: taskFor(req),
       signal: controller.signal,
       onChunk: (delta) => send('llm:stream-chunk', { streamId, delta }),
     })
@@ -220,9 +295,29 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   ipcMain.handle('db:get-stats', () => db.getStats());
 
   // ---- Settings ----
-  ipcMain.handle('settings:get', (_e, key) => settingsStore.get(key));
-  ipcMain.handle('settings:set', (_e, { key, value }) => settingsStore.set(key, value));
+  // API keys nunca voltam para a tela: o renderer só sabe se existe uma
+  ipcMain.handle('settings:get', (_e, key) => settingsStore.getForRenderer(key));
+  ipcMain.handle('settings:set', (_e, { key, value }) => {
+    if (isSecret(key) && value === MASK) return undefined; // campo não mexido
+    return settingsStore.set(key, value);
+  });
   ipcMain.handle('settings:get-all', () => settingsStore.getAll());
+
+  // ---- atualização ----
+  ipcMain.handle('update:check', async () => {
+    try { return { ok: true, ...(await updater.checkForUpdate()) }; } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+  ipcMain.handle('update:download', async () => {
+    try {
+      return await updater.downloadUpdate((p) => sendToOverlay('update:progress', p));
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    }
+  });
+  ipcMain.handle('update:install', (_e, file) => updater.installUpdate(file));
+  ipcMain.handle('update:open-page', (_e, url) => updater.openReleasesPage(url));
 }
 
 module.exports = { registerIpc, disposeIpc };

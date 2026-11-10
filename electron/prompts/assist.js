@@ -37,7 +37,9 @@ Como responder:
 - Responda a pergunta detectada de forma útil e concisa, usando o contexto da conversa quando relevante.`,
 };
 
-function buildAssistMessages({ transcript, question, mode = 'meeting', profile, instruction }) {
+const { withAssistant, memoryBlock } = require('./blocks');
+
+function buildAssistMessages({ transcript, question, mode = 'meeting', profile, instruction, memory, assistant }) {
   const system = ASSIST_SYSTEMS[mode] || ASSIST_SYSTEMS.meeting;
   const transcriptBlock = transcript?.length
     ? `<transcript>\n${transcript.map((t) => `[${t.source}] ${t.text}`).join('\n')}\n</transcript>`
@@ -52,8 +54,8 @@ function buildAssistMessages({ transcript, question, mode = 'meeting', profile, 
     ? `Pergunta detectada na conversa: "${question.trim()}"\n\nSugira agora o que o usuário deve dizer.${instructionBlock}`
     : `Com base na conversa até aqui, sugira o que o usuário pode dizer a seguir.${instructionBlock}`;
   return [
-    { role: 'system', content: system },
-    { role: 'user', content: `${transcriptBlock}${profileBlock}\n\n${ask}` },
+    { role: 'system', content: withAssistant(system, assistant) },
+    { role: 'user', content: `${memoryBlock(memory)}${transcriptBlock}${profileBlock}\n\n${ask}` },
   ];
 }
 

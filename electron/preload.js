@@ -13,7 +13,7 @@ function on(channel, callback) {
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
-contextBridge.exposeInMainWorld('openperssua', {
+contextBridge.exposeInMainWorld('teka', {
   overlay: {
     toggle: () => send('overlay:toggle'),
     setClickThrough: (enabled) => invoke('overlay:set-click-through', enabled),
@@ -55,9 +55,25 @@ contextBridge.exposeInMainWorld('openperssua', {
     onDelta: (cb) => on('stt:transcription-delta', cb),
     onComplete: (cb) => on('stt:transcription-complete', cb),
     onModelProgress: (cb) => on('stt:model-progress', cb),
+    listModels: () => invoke('stt:list-models'),
+    downloadModel: (name) => invoke('stt:download-model', name),
+    cancelDownload: (name) => invoke('stt:cancel-download', name),
+    deleteModel: (name) => invoke('stt:delete-model', name),
+    check: (name) => invoke('stt:check', name),
+  },
+  update: {
+    check: () => invoke('update:check'),
+    download: () => invoke('update:download'),
+    install: (file) => invoke('update:install', file),
+    openPage: (url) => invoke('update:open-page', url),
+    onAvailable: (cb) => on('update:available', cb),
+    onProgress: (cb) => on('update:progress', cb),
   },
   llm: {
     listProviders: () => invoke('llm:list-providers'),
+    listTasks: () => invoke('llm:list-tasks'),
+    test: () => invoke('llm:test'),
+    openKeyPage: (providerId) => invoke('llm:open-key-page', providerId),
     chat: (req) => invoke('llm:chat', req),
     chatStream: (req) => invoke('llm:chat-stream', req),
     abortStream: (streamId) => send('llm:abort-stream', streamId),

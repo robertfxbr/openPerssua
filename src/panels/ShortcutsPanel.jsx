@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { acceleratorFromEvent, prettyAccelerator } from '../util/accelerator';
 
-const api = window.openperssua;
+const api = window.teka;
 
 // Aba "atalhos" do painel de configurações: lista cada ação com a
 // combinação atual e permite gravar outra, desativar ou voltar ao padrão.

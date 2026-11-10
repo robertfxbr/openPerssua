@@ -1,7 +1,8 @@
-// OpenPerssua — bootstrap do processo principal.
+// Teka — bootstrap do processo principal.
 // Versão enxuta do main.js original (que tem ~1.450 linhas, 11 janelas,
 // flavors whitelabel, telemetria e updater). Aqui: overlay + tray.
 
+const fs = require('fs');
 const path = require('path');
 const { app, clipboard, session, Tray, Menu, nativeImage } = require('electron');
 const log = require('electron-log');
@@ -20,8 +21,21 @@ const { SettingsStore } = require('./settings/SettingsStore');
 const { ShortcutManager } = require('./shortcuts/ShortcutManager');
 const { moveToNextDisplay } = require('./system/displays');
 const { openLogsFolder } = require('./system/logs');
+const updater = require('./system/updater');
+
+const UPDATE_FIRST_CHECK_MS = 20000;          // espera o app assentar
+const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // e repete a cada 6 h
 
 const isDev = process.argv.includes('--dev');
+
+// O app se chamava OpenPerssua. Quem já usava continua na pasta antiga:
+// copiar para uma pasta nova perderia o login do ChatGPT e as API keys,
+// porque o Windows cifra esses dados com uma chave guardada dentro da
+// própria pasta. Instalação nova usa a pasta Teka. --user-data-dir manda.
+const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'openperssua');
+if (!app.commandLine.hasSwitch('user-data-dir') && fs.existsSync(LEGACY_USER_DATA)) {
+  app.setPath('userData', LEGACY_USER_DATA);
+}
 log.initialize();
 
 // Texto copiado maior que isso é cortado antes de ir ao overlay
@@ -56,14 +70,33 @@ function moveOverlayToNextDisplay() {
   return r;
 }
 
-function createTray() {
+// Verificação de atualização. manual=true vem da bandeja: mostra o overlay e
+// avisa até quando já está na última versão. A automática fica quieta, não
+// abre a janela e respeita "ignorar esta versão".
+async function checkUpdates(settingsStore, manual) {
+  try {
+    if (!manual && (await settingsStore.get('update.autoCheck')) === false) return;
+    const r = await updater.checkForUpdate();
+    if (!manual && (!r.available || r.version === (await settingsStore.get('update.skipVersion')))) return;
+    const win = getOverlayWindow();
+    if (!win || win.webContents.isDestroyed()) return;
+    if (manual && !win.isVisible()) win.showInactive();
+    win.webContents.send('update:available', { ok: true, manual, ...r });
+  } catch (err) {
+    log.warn('verificação de atualização falhou', err);
+    if (manual) sendToOverlay('update:available', { ok: false, manual, error: String(err.message || err) });
+  }
+}
+
+function createTray(settingsStore) {
   const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'));
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip('OpenPerssua');
+  tray.setToolTip('Teka');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Mostrar/Ocultar', click: () => toggleOverlay(isDev) },
     { label: 'Mover para o próximo monitor', click: () => moveOverlayToNextDisplay() },
     { type: 'separator' },
+    { label: 'Verificar atualizações', click: () => checkUpdates(settingsStore, true) },
     { label: 'Abrir pasta de logs', click: () => openLogsFolder() },
     { type: 'separator' },
     { label: 'Sair', click: () => app.quit() },
@@ -103,8 +136,13 @@ async function bootstrap() {
 
   createOverlayWindow({ isDev });
   registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts });
-  createTray();
+  createTray(settingsStore);
   await shortcuts.init();
+
+  if (!isDev) {
+    setTimeout(() => checkUpdates(settingsStore, false), UPDATE_FIRST_CHECK_MS);
+    setInterval(() => checkUpdates(settingsStore, false), UPDATE_INTERVAL_MS);
+  }
 
   app.on('before-quit', () => {
     disposeIpc(); // encerra whisper-server e streams ativas

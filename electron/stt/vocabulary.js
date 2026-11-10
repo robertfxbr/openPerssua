@@ -64,9 +64,9 @@ const VOCAB_EN =
   'Python, React, Node.js, SQL, Git, GitHub, Docker, Kubernetes, AWS, ' +
   'Azure, cloud, microservices, CI/CD, machine learning, AI, LLM, product, ' +
   'UX, UI, scrum, agile, kanban, ChatGPT, Claude, OpenAI, Anthropic, ' +
-  'OpenPerssua';
+  'Teka';
 
-const VOCAB_PT = `${NOMES_BR}. ${REUNIAO_PT}. ${TECH_PT}. OpenPerssua`;
+const VOCAB_PT = `${NOMES_BR}. ${REUNIAO_PT}. ${TECH_PT}. Teka`;
 
 // Versão compacta para idioma "auto": nomes (maior fonte de erro) + núcleo EN.
 const VOCAB_AUTO = `${NOMES_BR}. ${REUNIAO_PT}. ${TECH_PT}. ${VOCAB_EN}`;

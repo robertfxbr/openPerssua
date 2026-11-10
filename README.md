@@ -1,4 +1,7 @@
-# OpenPerssua
+# Teka
+
+> Antes chamado **OpenPerssua**. Instalações antigas continuam usando a pasta
+> de dados `%APPDATA%/openperssua`, sem perder histórico nem login.
 
 > **Autor e mantenedor:** [Robert](https://github.com/robertfxbr) —
 > desenvolvido com assistência de IA (Kimi). Contribuições são bem-vindas;
@@ -7,9 +10,10 @@
 
 Copiloto de reuniões open source para desktop (Windows/macOS/Linux): um overlay
 sempre visível que escuta o microfone e o áudio do sistema, transcreve com
-Whisper local e responde perguntas sobre a conversa — **com o LLM que você já
-tem**: ChatGPT (assinatura, via login OAuth), OpenAI API, Claude API,
-**Claude Code CLI** ou Ollama local.
+Whisper local e responde perguntas sobre a conversa **com o LLM que você já
+tem, sem pagar API à parte**: login do ChatGPT, Claude Code CLI, Codex CLI,
+Gemini CLI, Ollama ou um servidor local (LM Studio, llama.cpp). As APIs pagas
+por uso (OpenAI, Claude) continuam disponíveis para quem preferir.
 
 Projeto de portfólio: reimplementação limpa (MIT) baseada em análise de
 comportamento de um produto comercial feita com
@@ -22,13 +26,23 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
 - **Electron + React + Vite**, processo principal modular (1 arquivo por domínio)
 - **LLMRouter** com adapters plugáveis — interface única `chat/chatStream`:
 
-  | Adapter | Backend | Credencial |
-  |---|---|---|
-  | `OpenAIAdapter` | api.openai.com | API key |
-  | `ChatGPTOAuthAdapter` | Responses API | assinatura ChatGPT (OAuth PKCE, fluxo público do Codex CLI) |
-  | `ClaudeAdapter` | api.anthropic.com | API key |
-  | `ClaudeCodeAdapter` | subprocess `claude -p` | login local do Claude Code |
-  | `OllamaAdapter` | servidor OpenAI-compatible local | nenhuma |
+  | Adapter | Backend | Credencial | Custo extra |
+  |---|---|---|---|
+  | `ChatGPTOAuthAdapter` | Responses API | assinatura ChatGPT (OAuth PKCE, fluxo público do Codex CLI) | não |
+  | `ClaudeCodeAdapter` | subprocess `claude -p` | login local do Claude Code | não |
+  | `CodexCliAdapter` | subprocess `codex exec` (sandbox read-only) | `codex login` (conta ChatGPT) | não |
+  | `GeminiCliAdapter` | subprocess `gemini` | login Google (cota gratuita) | não |
+  | `OllamaAdapter` | Ollama local | nenhuma | não |
+  | `OpenAICompatibleAdapter` | servidor local OpenAI-compatible (LM Studio, llama.cpp) | opcional | não |
+  | `OpenAIAdapter` | api.openai.com | API key | por uso |
+  | `ClaudeAdapter` | api.anthropic.com | API key | por uso |
+
+  Nas CLIs o prompt vai sempre pelo stdin (nunca pela linha de comando) e o
+  processo roda na pasta temporária. API keys, quando usadas, ficam cifradas
+  com `safeStorage` e nunca voltam para a tela.
+- **Modelo por tarefa** (aba "IA"): perguntas, sugestões ao vivo, resumo/e-mail,
+  análise de tela e tradução podem usar cérebros diferentes (ex.: tradução no
+  Ollama, sugestões no ChatGPT)
 
 - **OAuth PKCE** contra `auth.openai.com` com token cifrado via `safeStorage`
 - **Whisper local** (whisper.cpp server embutido no instalador) com buffer de
@@ -90,6 +104,23 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
   atalho ou pelo menu da bandeja (a posição relativa é mantida)
 - **Logs de debug**: copiar o trecho recente ou abrir a pasta, pela aba
   "sistema" ou pela bandeja
+- **E-mail de follow-up**: depois do resumo, um clique escreve o e-mail da
+  reunião (assunto, pontos, decisões, próximos passos, com [marcadores] onde
+  faltar dado). No histórico dá para gerar resumo e e-mail de sessões antigas
+- **Memória de reuniões longas**: as falas antigas viram um resumo curto que
+  acompanha toda pergunta, então o contexto não se perde em reuniões de horas
+- **Tradução ao vivo** (PT, EN, ES) embaixo de cada fala da reunião
+- **Assistentes**: perfis prontos (entrevista técnica, comportamental, vendas,
+  reunião de equipe, aula, atendimento) que juntam modo e instruções de foco;
+  dá para duplicar e criar os seus
+- **Gerenciador de modelos do Whisper** (aba "voz"): do Tiny ao Large v3, com
+  download, cancelamento, troca e exclusão
+- **Filtro de eco**: sem fone, o mic capta a voz dos outros pela caixa de
+  som; a fala repetida sai da transcrição. Supressão de ruído configurável
+- **Diagnóstico** de microfone, áudio do sistema, transcrição e cérebro, no
+  onboarding e na aba "sistema"
+- **Aviso de atualização** pelo GitHub Releases; o instalador baixado só roda
+  se o SHA-512 conferir com o `latest.yml` da release
 - **Refresh token OAuth** do ChatGPT: o login não expira mais a cada sessão
 - **Modo mini** (pílula compacta com a sugestão ao vivo), **medidores de
   áudio** mic/sistema, **temas** (escuro/claro, 3 acentos, opacidade, fonte)
@@ -108,6 +139,8 @@ Pré-requisitos conforme o provedor escolhido:
 - Whisper local: coloque o `whisper-server` (whisper.cpp) em
   `<userData>/whisper-bin/` — o modelo GGML é baixado automaticamente.
 - Claude Code: `claude` CLI instalado e autenticado (`claude login`).
+- Codex CLI: `codex` instalado e autenticado (`codex login`).
+- Gemini CLI: `gemini` instalado; rode `gemini` uma vez para entrar com a conta Google.
 - Ollama: servidor em `http://127.0.0.1:11434`.
 
 ## Estrutura
@@ -118,17 +151,19 @@ electron/
   preload.js               contextBridge com allowlist
   windows/OverlayWindow.js overlay always-on-top / click-through
   shortcuts/               atalhos globais configuráveis
-  system/                  monitores, captura de tela, logs
+  system/                  monitores, captura de tela, logs, atualização
   stt/WhisperService.js    whisper.cpp server + sessões + cap de buffer
   llm/LLMRouter.js         seleção de provedor
   llm/messageFormat.js     mensagens com imagem no formato de cada API
-  llm/providers/           OpenAI, ChatGPT OAuth, Claude, Claude Code, Ollama
+  llm/providers/           ChatGPT OAuth, CLIs (Claude Code, Codex, Gemini), Ollama, servidor local, APIs
   db/                      better-sqlite3 + schema.sql
-  prompts/                 copiloto, resumo e análise de tela (anti prompt-injection)
+  prompts/                 copiloto, resumo, e-mail, memória, tradução e tela (anti prompt-injection)
   ipc/index.js             handlers por domínio
 src/main.jsx               UI do overlay (React)
 src/history/               tela de histórico
-src/panels/                abas "atalhos" e "sistema" das configurações
+src/panels/                abas das configurações (IA, assistentes, voz, atalhos, sistema) e diagnóstico
+src/assistants/            assistentes prontos
+src/audio/echo.js          filtro de eco por texto
 ```
 
 ## Gerando o instalador (Windows)
@@ -137,7 +172,7 @@ src/panels/                abas "atalhos" e "sistema" das configurações
 npm install        # se better-sqlite3 falhar por falta de Visual Studio,
                    # use: npm install --ignore-scripts (o electron-builder
                    # baixa o binário nativo certo para o Electron na hora de empacotar)
-npm run dist:win   # gera release/OpenPerssua Setup X.Y.Z.exe (NSIS)
+npm run dist:win   # gera release/Teka Setup X.Y.Z.exe (NSIS)
 ```
 
 Notas de ambiente:

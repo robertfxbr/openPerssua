@@ -1,9 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { formatDuration } from '../util/time';
 
-const api = window.openperssua;
+const api = window.teka;
 const PAGE_SIZE = 50;
 const DEFAULT_SUBJECT = 'Sessão overlay';
+const SUMMARY_TAG = '[RESUMO DA SESSÃO]';
+const EMAIL_TAG = '[E-MAIL DE FOLLOW-UP]';
+const MAX_DOC_LINES = 300; // falas mandadas ao gerar resumo/e-mail de uma sessão antiga
 
 // plural(1, 'fala') -> "1 fala"; plural(3, 'fala') -> "3 falas"
 function plural(n, singular, pluralForm = `${singular}s`) {
@@ -34,10 +37,15 @@ function sessionToMarkdown({ session, transcriptions, messages }) {
     }
   }
   const summaries = messages.filter((m) => m.content?.startsWith('[RESUMO'));
-  const answers = messages.filter((m) => !m.content?.startsWith('[RESUMO'));
+  const emails = messages.filter((m) => m.content?.startsWith('[E-MAIL'));
+  const answers = messages.filter((m) => !m.content?.startsWith('[RESUMO') && !m.content?.startsWith('[E-MAIL'));
   if (summaries.length) {
     lines.push('## Resumo', '');
-    for (const m of summaries) lines.push(m.content.replace('[RESUMO DA SESSÃO]\n', ''), '');
+    for (const m of summaries) lines.push(m.content.replace(`${SUMMARY_TAG}\n`, ''), '');
+  }
+  if (emails.length) {
+    lines.push('## E-mail de follow-up', '');
+    for (const m of emails) lines.push(m.content.replace(`${EMAIL_TAG}\n`, ''), '');
   }
   if (answers.length) {
     lines.push('## Respostas do copiloto', '');
@@ -48,7 +56,7 @@ function sessionToMarkdown({ session, transcriptions, messages }) {
 
 // Tela de histórico: lista, renomear, excluir, limpar tudo, ver detalhes,
 // exportar em Markdown e retomar uma sessão antiga.
-export function HistoryView({ onBack, onResume, onError, copyText, listening, activeSessionId }) {
+export function HistoryView({ onBack, onResume, onError, copyText, listening, activeSessionId, model, assistant }) {
   const [sessions, setSessions] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [stats, setStats] = useState(null);
@@ -57,6 +65,7 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
   const [confirmDelete, setConfirmDelete] = useState(null); // id aguardando 2º clique
   const [confirmClear, setConfirmClear] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [generating, setGenerating] = useState(null); // 'summary' | 'email' | null
 
   async function load(offset = 0) {
     try {
@@ -118,6 +127,35 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
     setHasMore(false);
     setDetail(null);
     api.db.getStats().then(setStats).catch(() => {});
+  }
+
+  // Resumo ou e-mail de uma sessão antiga, gravados junto das mensagens dela
+  async function generate(kind) {
+    if (!detail || generating) return;
+    const lines = detail.transcriptions.map((t) => ({ source: t.source, text: t.text }));
+    if (lines.length < 3) { onError('sessão curta demais para resumir'); return; }
+    setGenerating(kind);
+    try {
+      const lastSummary = [...detail.messages].reverse().find((m) => m.content?.startsWith(SUMMARY_TAG));
+      const text = await api.llm.chat({
+        mode: kind === 'email' ? 'email' : 'summary',
+        transcript: lines.slice(-MAX_DOC_LINES),
+        summary: kind === 'email' && lastSummary ? lastSummary.content.replace(`${SUMMARY_TAG}\n`, '') : undefined,
+        assistant: kind === 'email' ? assistant : undefined,
+        model,
+      });
+      if (!text) return;
+      const content = `${kind === 'email' ? EMAIL_TAG : SUMMARY_TAG}\n${text}`;
+      const sessionId = detail.session.id;
+      await api.db.addMessage({ sessionId, role: 'assistant', content });
+      setDetail((d) => (d?.session.id === sessionId
+        ? { ...d, messages: [...d.messages, { id: `new-${Date.now()}`, role: 'assistant', content }] }
+        : d));
+    } catch (e) {
+      onError(`${kind === 'email' ? 'e-mail' : 'resumo'}: ${e.message || e}`);
+    } finally {
+      setGenerating(null);
+    }
   }
 
   async function exportMarkdown() {
@@ -258,6 +296,12 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
               >
                 ▶ continuar sessão
               </button>
+              <button className="chip" onClick={() => generate('summary')} disabled={Boolean(generating)} title="Gerar (de novo) o resumo desta sessão">
+                {generating === 'summary' ? 'resumindo…' : '✦ resumo'}
+              </button>
+              <button className="chip" onClick={() => generate('email')} disabled={Boolean(generating)} title="Escrever o e-mail de follow-up desta reunião">
+                {generating === 'email' ? 'escrevendo…' : '✉ e-mail'}
+              </button>
               {deleteButton(detail.session.id)}
             </div>
           </div>
@@ -271,12 +315,20 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
                 {t.text}
               </div>
             ))}
-            {detail.messages.map((m) => (
-              <div key={`m${m.id}`} className="answer">
-                <span className="label">✦ copiloto</span>
-                {m.content}
-              </div>
-            ))}
+            {detail.messages.map((m) => {
+              const isSummary = m.content?.startsWith(SUMMARY_TAG);
+              const isEmail = m.content?.startsWith(EMAIL_TAG);
+              const body = isSummary || isEmail ? m.content.slice(m.content.indexOf('\n') + 1) : m.content;
+              return (
+                <div key={`m${m.id}`} className="answer">
+                  <span className="label">{isSummary ? '✦ resumo' : isEmail ? '✉ e-mail de follow-up' : '✦ copiloto'}</span>
+                  {body}
+                  {(isSummary || isEmail) && (
+                    <button className="mini-link copy-doc" onClick={() => copyText(body)}>copiar</button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </>
       )}

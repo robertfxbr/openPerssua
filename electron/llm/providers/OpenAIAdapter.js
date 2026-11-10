@@ -6,7 +6,7 @@ const { toOpenAIChat } = require('../messageFormat');
 class OpenAIAdapter {
   constructor({ settingsStore }) {
     this.id = 'openai';
-    this.label = 'OpenAI API (API key)';
+    this.label = 'OpenAI API (key paga por uso)';
     this.settingsStore = settingsStore;
   }
 

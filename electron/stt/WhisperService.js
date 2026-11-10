@@ -11,6 +11,24 @@ const MAX_BUFFER_BYTES = 16 * 1024 * 1024; // equivalente ao CappedAudioBuffer
 const SERVER_PORT = 8178;
 const MODEL_LOAD_TIMEOUT_MS = 120000; // modelos grandes demoram
 
+// Modelos ggml oficiais do whisper.cpp que o app sabe baixar. Só nomes desta
+// lista são aceitos: o nome vira caminho de arquivo, e um nome livre poderia
+// apontar para fora da pasta de modelos.
+const MODEL_CATALOG = [
+  { name: 'ggml-tiny.bin', label: 'Tiny', approxMB: 75, note: 'mais rápido, menos preciso' },
+  { name: 'ggml-base.bin', label: 'Base', approxMB: 142, note: 'equilíbrio' },
+  { name: 'ggml-small.bin', label: 'Small', approxMB: 466, note: 'bem melhor em PT-BR · recomendado' },
+  { name: 'ggml-large-v3-turbo-q5_0.bin', label: 'Large v3 Turbo (q5)', approxMB: 547, note: 'qualidade alta, compacto' },
+  { name: 'ggml-medium.bin', label: 'Medium', approxMB: 1463, note: 'preciso, pede CPU forte' },
+  { name: 'ggml-large-v3-turbo.bin', label: 'Large v3 Turbo', approxMB: 1549, note: 'quase o Large, bem mais rápido' },
+  { name: 'ggml-large-v3.bin', label: 'Large v3', approxMB: 2951, note: 'máxima precisão, lento sem GPU' },
+];
+const CATALOG_NAMES = new Set(MODEL_CATALOG.map((m) => m.name));
+
+function assertModelName(name) {
+  if (!CATALOG_NAMES.has(name)) throw new Error(`modelo desconhecido: ${name}`);
+}
+
 class WhisperService {
   constructor({ userDataDir, sendToRenderer }) {
     this.userDataDir = userDataDir;
@@ -19,6 +37,9 @@ class WhisperService {
     this.serverProcess = null;
     this.serverReady = null; // Promise compartilhada de readiness
     this.loadedModel = null; // ggml carregado no servidor atual
+    this.downloads = new Map();   // nome -> promise do download em andamento
+    this.progress = new Map();    // nome -> { received, total }
+    this.controllers = new Map(); // nome -> AbortController (cancelar)
   }
 
   modelsDir() {
@@ -31,21 +52,79 @@ class WhisperService {
   // Downloads do MESMO modelo são serializados: dois cliques/sessões
   // paralelos dividem a mesma promise em vez de corromper o .part.
   async downloadModel(name = 'ggml-base.bin', onProgress) {
-    this.downloads = this.downloads || new Map();
+    assertModelName(name);
     if (this.downloads.has(name)) return this.downloads.get(name);
-    const p = this._doDownload(name, onProgress)
-      .finally(() => this.downloads.delete(name));
+    const controller = new AbortController();
+    this.controllers.set(name, controller);
+    const p = this._doDownload(name, (prog) => {
+      this.progress.set(name, prog);
+      if (onProgress) onProgress({ name, ...prog });
+    }, controller.signal)
+      .finally(() => {
+        this.downloads.delete(name);
+        this.progress.delete(name);
+        this.controllers.delete(name);
+      });
     this.downloads.set(name, p);
     return p;
   }
 
-  async _doDownload(name, onProgress) {
+  cancelDownload(name) {
+    const c = this.controllers.get(name);
+    if (!c) return { ok: false, error: 'nenhum download deste modelo em andamento' };
+    c.abort();
+    return { ok: true };
+  }
+
+  modelPath(name) {
+    assertModelName(name);
+    return path.join(this.modelsDir(), name);
+  }
+
+  isInstalled(name) {
+    const p = this.modelPath(name);
+    return fs.existsSync(p) && fs.statSync(p).size > 0;
+  }
+
+  // Catálogo com o estado de cada modelo no disco, para a aba "voz"
+  listModels() {
+    return MODEL_CATALOG.map((m) => {
+      const p = path.join(this.modelsDir(), m.name);
+      const bytes = fs.existsSync(p) ? fs.statSync(p).size : 0;
+      return {
+        ...m,
+        installed: bytes > 0,
+        bytes,
+        downloading: this.downloads.has(m.name),
+        progress: this.progress.get(m.name) || null,
+        loaded: this.loadedModel === p,
+      };
+    });
+  }
+
+  // Apagar o modelo que o servidor está usando só é permitido sem escuta
+  // ativa; nesse caso o servidor é encerrado antes (no Windows o arquivo
+  // fica travado enquanto o processo roda).
+  deleteModel(name) {
+    const p = this.modelPath(name);
+    if (this.downloads.has(name)) return { ok: false, error: 'cancele o download antes de apagar' };
+    if (this.loadedModel === p) {
+      if (this.sessions.size > 0) return { ok: false, error: 'pare a escuta antes de apagar o modelo em uso' };
+      this.dispose();
+      this.loadedModel = null;
+    }
+    fs.rmSync(p, { force: true });
+    fs.rmSync(`${p}.part`, { force: true });
+    return { ok: true };
+  }
+
+  async _doDownload(name, onProgress, signal) {
     const dest = path.join(this.modelsDir(), name);
     if (fs.existsSync(dest) && fs.statSync(dest).size > 0) return { path: dest, cached: true };
 
     fs.mkdirSync(this.modelsDir(), { recursive: true });
     const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${name}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal });
     if (!res.ok) throw new Error(`download do modelo falhou: HTTP ${res.status}`);
 
     const total = Number(res.headers.get('content-length')) || 0;
@@ -61,9 +140,14 @@ class WhisperService {
         received += value.length;
         if (onProgress && total) onProgress({ received, total });
       }
-    } finally {
+    } catch (err) {
+      // Cancelado ou rede caiu: fecha e apaga o .part para não sobrar lixo
       await new Promise((r) => out.end(r));
+      fs.rmSync(tmp, { force: true });
+      if (signal?.aborted) throw new Error('download cancelado');
+      throw err;
     }
+    await new Promise((r) => out.end(r));
     if (total && received !== total) {
       fs.rmSync(tmp, { force: true });
       throw new Error(`download incompleto: ${received}/${total} bytes`);
@@ -80,6 +164,18 @@ class WhisperService {
     return { path: dest, cached: false };
   }
 
+  // Onde está o whisper-server (binary null se não houver nenhum)
+  findBinary() {
+    const exeName = process.platform === 'win32' ? 'whisper-server.exe' : 'whisper-server';
+    // 1) userData (download manual) — 2) resources do app empacotado (embutido)
+    const candidates = [
+      path.join(this.userDataDir, 'whisper-bin', exeName),
+      ...(process.resourcesPath ? [path.join(process.resourcesPath, 'whisper-bin', exeName)] : []),
+      path.join(__dirname, '..', '..', 'whisper-bin', exeName), // dev
+    ];
+    return { binary: candidates.find((p) => fs.existsSync(p)) || null, candidates };
+  }
+
   // Sobe whisper-server; em produção o binário fica em resources/whisper-bin
   async ensureServer(modelPath) {
     // Troca de modelo (ex.: base → small) exige reiniciar o servidor — ele
@@ -91,14 +187,7 @@ class WhisperService {
     }
     if (this.serverReady) return this.serverReady;
 
-    const exeName = process.platform === 'win32' ? 'whisper-server.exe' : 'whisper-server';
-    // 1) userData (download manual) — 2) resources do app empacotado (embutido)
-    const candidates = [
-      path.join(this.userDataDir, 'whisper-bin', exeName),
-      ...(process.resourcesPath ? [path.join(process.resourcesPath, 'whisper-bin', exeName)] : []),
-      path.join(__dirname, '..', '..', 'whisper-bin', exeName), // dev
-    ];
-    const binary = candidates.find((p) => fs.existsSync(p));
+    const { binary, candidates } = this.findBinary();
     if (!binary) {
       throw new Error(`whisper-server não encontrado em nenhum destes caminhos: ${candidates.join(' | ')}`);
     }
@@ -224,4 +313,4 @@ function pcmToWav(pcm, sampleRate) {
   return Buffer.concat([header, pcm]);
 }
 
-module.exports = { WhisperService };
+module.exports = { WhisperService, MODEL_CATALOG };

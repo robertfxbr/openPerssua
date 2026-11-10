@@ -1,4 +1,4 @@
-# Auditoria do OpenPerssua — v0.1.0 → v0.1.1
+# Auditoria do Teka — v0.1.0 → v0.1.1
 
 Auditoria de código realizada em 02/11/2026 sobre a primeira versão empacotada.
 Cada achado abaixo foi **corrigido** no código; a coluna "gravidade" reflete o

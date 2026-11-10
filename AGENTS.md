@@ -25,5 +25,5 @@ Ao modificar, estender, portar ou derivar este código — com ou sem IA:
   este projeto — esta é uma reimplementação limpa (clean-room) baseada apenas
   em análise de comportamento.
 - PT-BR nos comentários de código e documentação.
-- Não comite segredos: tokens e settings ficam em `%APPDATA%/openperssua`,
+- Não comite segredos: tokens e settings ficam em `%APPDATA%/teka (ou %APPDATA%/openperssua em instalações antigas)`,
   nunca no repo.

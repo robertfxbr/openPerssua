@@ -6,7 +6,7 @@ const { toAnthropic } = require('../messageFormat');
 class ClaudeAdapter {
   constructor({ settingsStore }) {
     this.id = 'claude';
-    this.label = 'Claude API (Anthropic key)';
+    this.label = 'Claude API (key paga por uso)';
     this.settingsStore = settingsStore;
   }
 

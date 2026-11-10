@@ -4,11 +4,17 @@ import { detectQuestion } from './assist/questionDetector';
 import { HistoryView } from './history/HistoryView';
 import { ShortcutsPanel } from './panels/ShortcutsPanel';
 import { SystemPanel } from './panels/SystemPanel';
+import { AIPanel } from './panels/AIPanel';
+import { AssistantsPanel } from './panels/AssistantsPanel';
+import { VoicePanel } from './panels/VoicePanel';
+import { DiagnosticsPanel } from './panels/DiagnosticsPanel';
+import { BUILTIN_ASSISTANTS, findAssistant } from './assistants/presets';
+import { findEcho, ECHO_WINDOW_MS } from './audio/echo';
 import { formatClock } from './util/time';
 import { prettyAccelerator } from './util/accelerator';
 import './styles.css';
 
-const api = window.openperssua;
+const api = window.teka;
 const MAX_TRANSCRIPT_LINES = 500; // cap para não crescer sem limite em reuniões longas
 const ASSIST_CONTEXT_LINES = 40;  // janela de contexto enviada ao LLM no auto-assist
 const ASSIST_COOLDOWN_MS = 12000; // mínimo entre sugestões automáticas
@@ -17,6 +23,17 @@ const PENDING_QUESTION_DRAFT_MS = 1200; // no modo entrevista, o rascunho começ
 const DRAFT_REFRESH_MS = 1400;    // debounce do refinamento enquanto o outro fala
 const NEAR_BOTTOM_PX = 48;        // abaixo disso a transcrição conta como "no fim"
 const CLIPBOARD_DEFAULT_QUESTION = 'Explique ou responda o trecho que copiei.';
+
+// Memória de reuniões longas: a cada 80 falas ainda não resumidas, as mais
+// antigas (menos as 20 últimas) viram um resumo curto que acompanha as
+// perguntas. No máximo 200 falas por chamada.
+const COMPACT_TRIGGER_LINES = 80;
+const COMPACT_KEEP_RECENT = 20;
+const COMPACT_MAX_CHUNK = 200;
+const SUMMARY_FULL_LINES = 300;  // até aqui o resumo final lê a transcrição inteira
+const TRANSLATE_QUEUE_MAX = 8;   // fila de tradução: descarta as mais velhas
+const TRANSLATE_ERROR_GAP_MS = 30000; // não repete o mesmo aviso de erro toda fala
+const DEFAULT_TRANSLATE = { enabled: false, target: 'en', sources: 'system' };
 
 // ---- VAD (voice activity detection) por energia ----
 // Em vez de flush fixo a cada 5s (que cortava frases e gerava alucinações do
@@ -149,6 +166,19 @@ function App() {
   const [answerNote, setAnswerNote] = useState('');     // de onde veio a pergunta da resposta atual
   const [screenResult, setScreenResult] = useState(null); // { image, question, text, streaming }
 
+  // ---- onda 2: assistentes, memória, tradução, eco, e-mail, atualização ----
+  const [assistantId, setAssistantId] = useState('padrao');
+  const [customAssistants, setCustomAssistants] = useState([]);
+  const [compactEnabled, setCompactEnabled] = useState(true);
+  const [memory, setMemory] = useState('');
+  const [translate, setTranslate] = useState(DEFAULT_TRANSLATE);
+  const [echoFilter, setEchoFilter] = useState(true);
+  const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [followup, setFollowup] = useState(null); // { text, streaming }
+  const [updateInfo, setUpdateInfo] = useState(null); // release nova (ou "já atualizado")
+  const [updateProgress, setUpdateProgress] = useState(null);
+  const [updateFile, setUpdateFile] = useState(null);  // instalador baixado e conferido
+
   const sessionRef = useRef(null);   // { dbId, micSttId, sysSttId }
   const audioRef = useRef(null);     // { mic|sys: { stream, audioCtx, processor, analyser, flusher } }
   const transcriptEndRef = useRef(null);
@@ -184,6 +214,19 @@ function App() {
   const pendingRef = useRef(null);   // pergunta sem "?" aguardando continuação
   const vadRef = useRef({});         // estado VAD por slot (mic|sys)
   const toggleListenRef = useRef(null); // p/ atalho global sem closure obsoleta
+  const entryIdRef = useRef(0);          // id de cada fala (tradução e eco mexem nelas)
+  const pendingMicWritesRef = useRef(new Map()); // falas do mic esperando a checagem de eco
+  const memoryRef = useRef({ text: '', uptoTs: 0, session: null });
+  const compactingRef = useRef(false);
+  const compactEnabledRef = useRef(compactEnabled);
+  const translateRef = useRef(translate);
+  const translateQueueRef = useRef([]);
+  const translatingRef = useRef(false);
+  const translateErrorAtRef = useRef(0);
+  const echoFilterRef = useRef(echoFilter);
+  const noiseRef = useRef(noiseSuppression);
+  const assistantRef = useRef('');       // instruções do assistente escolhido
+  const summaryCtxRef = useRef(null);    // { dbId, transcript, memory } da última sessão encerrada
 
   useEffect(() => { assistModeRef.current = assistMode; }, [assistMode]);
   useEffect(() => { autoAssistRef.current = autoAssist; }, [autoAssist]);
@@ -195,6 +238,13 @@ function App() {
   useEffect(() => { sttPromptRef.current = sttPrompt; }, [sttPrompt]);
   useEffect(() => { suggestionRef.current = suggestion; }, [suggestion]);
   useEffect(() => { applyTheme(theme); }, [theme]);
+  useEffect(() => { compactEnabledRef.current = compactEnabled; }, [compactEnabled]);
+  useEffect(() => { translateRef.current = translate; }, [translate]);
+  useEffect(() => { echoFilterRef.current = echoFilter; }, [echoFilter]);
+  useEffect(() => { noiseRef.current = noiseSuppression; }, [noiseSuppression]);
+  useEffect(() => {
+    assistantRef.current = findAssistant(assistantId, customAssistants).instructions || '';
+  }, [assistantId, customAssistants]);
 
   useEffect(() => {
     refreshProviders();
@@ -222,19 +272,22 @@ function App() {
       if (v !== undefined && v !== null) setAutoScroll(Boolean(v));
     });
     api.shortcuts.list().then(setShortcutList).catch(() => {});
+    const loadFlag = (key, setter) => api.settings.get(key).then((v) => {
+      if (v !== undefined && v !== null) setter(Boolean(v));
+    });
+    loadFlag('audio.echoFilter', setEchoFilter);
+    loadFlag('audio.noiseSuppression', setNoiseSuppression);
+    loadFlag('llm.compact', setCompactEnabled);
+    api.settings.get('translate.config').then((t) => t && setTranslate({ ...DEFAULT_TRANSLATE, ...t }));
+    api.settings.get('assistants.custom').then((list) => Array.isArray(list) && setCustomAssistants(list));
+    api.settings.get('assistants.active').then((id) => id && setAssistantId(id));
 
     const unsubDelta = api.stt.onDelta(({ source, text }) => {
       if (!text?.trim()) return;
-      const entry = { source, text, ts: Date.now() };
-      transcriptRef.current = [...transcriptRef.current.slice(-MAX_TRANSCRIPT_LINES + 1), entry];
-      setTranscript(transcriptRef.current);
-      const dbId = sessionRef.current?.dbId;
-      if (dbId) api.db.addTranscription({ sessionId: dbId, source, text });
-      if (source === 'system') {
-        sysWindowRef.current = [...sysWindowRef.current.slice(-2), text];
-        maybeAutoAssist();
-      }
+      handleTranscription(source, text);
     });
+    const unsubUpdate = api.update.onAvailable(handleUpdateResult);
+    const unsubUpdateProg = api.update.onProgress(setUpdateProgress);
 
     // Atalhos globais: ✦ sugerir agora / copiar sugestão (sem focar a janela)
     const unsubTrig = api.overlay.onAssistTrigger(() => {
@@ -265,9 +318,212 @@ function App() {
       unsubScreen();
       unsubClip();
       unsubProg();
+      unsubUpdate();
+      unsubUpdateProg();
+      flushPendingWrites();
       stopAllCaptures();
     };
   }, []);
+
+  // ================= falas: eco, banco, tradução e memória =================
+  // Registrado uma vez (no onDelta), então só usa refs.
+
+  function handleTranscription(source, text) {
+    const now = Date.now();
+    let lines = transcriptRef.current;
+    if (echoFilterRef.current) {
+      if (source === 'mic') {
+        // Fala do mic igual a uma da reunião recém-chegada: é a caixa de som
+        const recentSys = lines.filter((t) => t.source === 'system' && now - t.ts <= ECHO_WINDOW_MS);
+        if (findEcho(text, now, recentSys)) return;
+      } else {
+        // A fala da reunião chegou depois do eco: tira o eco que já entrou
+        const echoes = lines.filter((t) => t.source === 'mic' && pendingMicWritesRef.current.has(t.id)
+          && findEcho(t.text, t.ts, [{ text, ts: now }]));
+        if (echoes.length) {
+          const ids = new Set(echoes.map((e) => e.id));
+          for (const id of ids) {
+            clearTimeout(pendingMicWritesRef.current.get(id)?.timer);
+            pendingMicWritesRef.current.delete(id);
+          }
+          lines = lines.filter((t) => !ids.has(t.id));
+        }
+      }
+    }
+    entryIdRef.current += 1;
+    const entry = { id: entryIdRef.current, source, text, ts: now };
+    transcriptRef.current = [...lines.slice(-MAX_TRANSCRIPT_LINES + 1), entry];
+    setTranscript(transcriptRef.current);
+    persistTranscription(entry);
+    if (source === 'system') {
+      sysWindowRef.current = [...sysWindowRef.current.slice(-2), text];
+      maybeAutoAssist();
+    }
+    maybeTranslate(entry);
+    maybeCompact();
+  }
+
+  // Com o filtro de eco ligado, a fala do mic espera alguns segundos antes de
+  // ir para o banco: se a mesma fala chegar pelo áudio do sistema, ela é eco
+  // e nem chega a ser gravada.
+  function persistTranscription(entry) {
+    const dbId = sessionRef.current?.dbId;
+    if (!dbId) return;
+    const write = () => api.db.addTranscription({ sessionId: dbId, source: entry.source, text: entry.text });
+    if (entry.source === 'mic' && echoFilterRef.current) {
+      const timer = setTimeout(() => {
+        pendingMicWritesRef.current.delete(entry.id);
+        write();
+      }, ECHO_WINDOW_MS);
+      pendingMicWritesRef.current.set(entry.id, { timer, write });
+    } else {
+      write();
+    }
+  }
+
+  function flushPendingWrites() {
+    for (const pending of pendingMicWritesRef.current.values()) {
+      clearTimeout(pending.timer);
+      pending.write();
+    }
+    pendingMicWritesRef.current.clear();
+  }
+
+  function maybeTranslate(entry) {
+    const cfg = translateRef.current;
+    if (!cfg.enabled || !providerRef.current) return;
+    if (cfg.sources !== 'all' && entry.source !== 'system') return;
+    const queue = translateQueueRef.current;
+    queue.push(entry);
+    if (queue.length > TRANSLATE_QUEUE_MAX) queue.shift();
+    runTranslateQueue();
+  }
+
+  // Uma tradução por vez, na ordem das falas
+  async function runTranslateQueue() {
+    if (translatingRef.current) return;
+    translatingRef.current = true;
+    try {
+      while (translateQueueRef.current.length) {
+        const entry = translateQueueRef.current.shift();
+        const cfg = translateRef.current;
+        if (!cfg.enabled) { translateQueueRef.current = []; break; }
+        try {
+          const out = String(await api.llm.chat({
+            mode: 'translate',
+            text: entry.text,
+            target: cfg.target,
+            model: llmModelRef.current || undefined,
+          }) || '').trim().replace(/^["“]|["”]$/g, '');
+          // "=" = a fala já estava no idioma escolhido
+          if (!out || out === '=' || out === entry.text.trim()) continue;
+          transcriptRef.current = transcriptRef.current.map((t) => (t.id === entry.id ? { ...t, translation: out } : t));
+          setTranscript(transcriptRef.current);
+        } catch (e) {
+          if (Date.now() - translateErrorAtRef.current > TRANSLATE_ERROR_GAP_MS) {
+            translateErrorAtRef.current = Date.now();
+            setError(`tradução: ${e.message || e}`);
+          }
+          translateQueueRef.current = [];
+        }
+      }
+    } finally {
+      translatingRef.current = false;
+    }
+  }
+
+  // Resume as falas antigas em segundo plano (ver COMPACT_*)
+  function maybeCompact() {
+    if (!compactEnabledRef.current || compactingRef.current || !providerRef.current || !sessionRef.current) return;
+    const mem = memoryRef.current;
+    const pendingLines = transcriptRef.current.filter((t) => t.ts > mem.uptoTs);
+    if (pendingLines.length < COMPACT_TRIGGER_LINES) return;
+    const chunk = pendingLines.slice(0, Math.min(pendingLines.length - COMPACT_KEEP_RECENT, COMPACT_MAX_CHUNK));
+    const session = mem.session;
+    compactingRef.current = true;
+    api.llm.chat({
+      mode: 'compact',
+      memory: mem.text,
+      transcript: chunk,
+      model: llmModelRef.current || undefined,
+    })
+      .then((text) => {
+        const t = String(text || '').trim();
+        if (!t || memoryRef.current.session !== session) return; // sessão trocou no meio
+        memoryRef.current = { ...memoryRef.current, text: t, uptoTs: chunk[chunk.length - 1].ts };
+        setMemory(t);
+      })
+      .catch((e) => console.warn('compactação falhou:', e))
+      .finally(() => { compactingRef.current = false; });
+  }
+
+  // Contexto para o LLM: com memória, vão o resumo e só as falas depois dele
+  function liveContext(limit) {
+    const mem = memoryRef.current;
+    const all = transcriptRef.current;
+    const lines = compactEnabledRef.current && mem.text ? all.filter((t) => t.ts > mem.uptoTs) : all;
+    return {
+      memory: compactEnabledRef.current && mem.text ? mem.text : undefined,
+      transcript: limit ? lines.slice(-limit) : lines,
+    };
+  }
+
+  function resetMemory(session) {
+    memoryRef.current = { text: '', uptoTs: 0, session };
+    setMemory('');
+  }
+
+  // ================= assistentes =================
+
+  function selectAssistant(id) {
+    setAssistantId(id);
+    api.settings.set('assistants.active', id);
+    const a = findAssistant(id, customAssistants);
+    if (a.mode) changeAssistMode(a.mode);
+  }
+
+  function saveCustomAssistants(list) {
+    setCustomAssistants(list);
+    api.settings.set('assistants.custom', list);
+  }
+
+  // ================= atualização =================
+
+  function handleUpdateResult(r) {
+    if (!r?.ok) {
+      if (r?.manual) setError(`atualização: ${r?.error || 'falhou'}`);
+      return;
+    }
+    if (r.available) setUpdateInfo(r);
+    else if (r.manual) setUpdateInfo({ upToDate: true, current: r.current, note: r.note });
+  }
+
+  async function downloadUpdate() {
+    setUpdateProgress({ received: 0, total: 0 });
+    const r = await api.update.download();
+    setUpdateProgress(null);
+    if (!r?.ok) { setError(`atualização: ${r?.error || 'falha no download'}`); return; }
+    setUpdateFile(r.file);
+  }
+
+  function skipUpdate() {
+    if (updateInfo?.version) api.settings.set('update.skipVersion', updateInfo.version);
+    setUpdateInfo(null);
+  }
+
+  // ================= preferências da onda 2 =================
+
+  function changeFlag(key, setter, value) {
+    setter(value);
+    api.settings.set(key, value);
+  }
+
+  function changeTranslate(patch) {
+    const next = { ...translate, ...patch };
+    setTranslate(next);
+    api.settings.set('translate.config', next);
+    if (!next.enabled) translateQueueRef.current = [];
+  }
 
   // Rolagem automática: só acompanha a fala nova se o usuário já estiver no
   // fim da lista. Se ele rolou para cima para reler, a tela fica parada e
@@ -427,7 +683,10 @@ function App() {
   // As falas novas entram na mesma sessão do banco.
   function resumeFromHistory(session, transcriptions) {
     if (listening || starting) return;
-    const lines = transcriptions.map((t) => ({ source: t.source, text: t.text, ts: t.ts }));
+    const lines = transcriptions.map((t) => {
+      entryIdRef.current += 1;
+      return { id: entryIdRef.current, source: t.source, text: t.text, ts: t.ts };
+    });
     transcriptRef.current = lines.slice(-MAX_TRANSCRIPT_LINES);
     setTranscript(transcriptRef.current);
     setSuggestion(null);
@@ -557,7 +816,8 @@ function App() {
       const { streamId } = await api.llm.chatStream({
         mode: 'assist',
         question: q,
-        transcript: transcriptRef.current.slice(-ASSIST_CONTEXT_LINES),
+        ...liveContext(ASSIST_CONTEXT_LINES),
+        assistant: assistantRef.current || undefined,
         assistMode: assistModeRef.current,
         profile: profileRef.current,
         instruction,
@@ -589,12 +849,22 @@ function App() {
   // ================= resumo pós-sessão =================
 
   async function summarizeSession(dbId, lines) {
+    // Sessão curta: o resumo lê tudo. Longa: memória compactada + o final.
+    const long = lines.length > SUMMARY_FULL_LINES;
+    const ctx = {
+      dbId,
+      transcript: long ? lines.slice(-SUMMARY_FULL_LINES) : lines,
+      memory: long && memoryRef.current.text ? memoryRef.current.text : undefined,
+    };
+    summaryCtxRef.current = ctx;
+    setFollowup(null);
     if (lines.length < 3 || !providerRef.current) return;
     setSummary({ text: '', streaming: true });
     try {
       const text = await api.llm.chat({
         mode: 'summary',
-        transcript: lines.slice(-300),
+        transcript: ctx.transcript,
+        memory: ctx.memory,
         model: llmModelRef.current || undefined,
       });
       setSummary({ text, streaming: false });
@@ -604,6 +874,30 @@ function App() {
     } catch (e) {
       setSummary(null);
       setError(`resumo: ${e.message || e}`);
+    }
+  }
+
+  // E-mail de follow-up a partir da última sessão encerrada
+  async function generateFollowup() {
+    const ctx = summaryCtxRef.current;
+    if (!ctx || followup?.streaming) return;
+    setFollowup({ text: '', streaming: true });
+    try {
+      const text = await api.llm.chat({
+        mode: 'email',
+        transcript: ctx.transcript,
+        memory: ctx.memory,
+        summary: summary?.text || undefined,
+        assistant: assistantRef.current || undefined,
+        model: llmModelRef.current || undefined,
+      });
+      setFollowup({ text, streaming: false });
+      if (ctx.dbId && text) {
+        api.db.addMessage({ sessionId: ctx.dbId, role: 'assistant', content: `[E-MAIL DE FOLLOW-UP]\n${text}` });
+      }
+    } catch (e) {
+      setFollowup(null);
+      setError(`e-mail: ${e.message || e}`);
     }
   }
 
@@ -622,6 +916,8 @@ function App() {
         await api.stt.stopSession(sess.micSttId).catch(() => {});
         if (sess.sysSttId) await api.stt.stopSession(sess.sysSttId).catch(() => {});
         sessionRef.current = null;
+        flushPendingWrites(); // falas do mic ainda na checagem de eco
+        translateQueueRef.current = [];
         // Grava o fim: é o que dá a duração da sessão no histórico
         api.db.endSession(sess.dbId).catch(() => {});
       }
@@ -652,6 +948,7 @@ function App() {
         prompt: sttPromptRef.current,
       });
       sessionRef.current = { dbId, micSttId, sysSttId: null };
+      resetMemory(dbId);
       await startMicCapture(micSttId);
       sessionStartRef.current = Date.now();
       setListening(true);
@@ -786,7 +1083,11 @@ function App() {
   }
 
   async function startMicCapture(sttId) {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // O cancelamento de eco do navegador só cobre o que ele mesmo toca; o eco
+    // da reunião (Zoom/Meet tocando pela caixa) é tratado em handleTranscription.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: noiseRef.current, autoGainControl: true },
+    });
     await pipeStreamToStt(stream, sttId, 'mic');
   }
 
@@ -846,7 +1147,8 @@ function App() {
     try {
       const { streamId } = await api.llm.chatStream({
         question: q,
-        transcript: transcriptRef.current,
+        ...liveContext(),
+        assistant: assistantRef.current || undefined,
         context: context || undefined,
         model: llmModelRef.current || undefined,
       });
@@ -919,7 +1221,8 @@ function App() {
         streamId,
         image: shot.dataUrl,
         question: q,
-        transcript: transcriptRef.current,
+        ...liveContext(),
+        assistant: assistantRef.current || undefined,
         profile: profileRef.current,
         model: llmModelRef.current || undefined,
       });
@@ -982,7 +1285,7 @@ function App() {
           <div className="compact-text">
             {suggestion?.text
               ? suggestion.text.slice(0, 140)
-              : listening ? 'ouvindo…' : 'OpenPerssua'}
+              : listening ? 'ouvindo…' : 'Teka'}
             {suggestion?.streaming && <span className="caret">▌</span>}
           </div>
           {suggestion?.text && (
@@ -1010,6 +1313,8 @@ function App() {
         copyText={copyText}
         listening={listening || starting}
         activeSessionId={sessionRef.current?.dbId || null}
+        model={llmModel || undefined}
+        assistant={assistantRef.current || undefined}
       />
     );
   }
@@ -1019,7 +1324,7 @@ function App() {
       <div className="header">
         <div className="logo">
           <div className="logo-mark">◆</div>
-          <span className="logo-name">OpenPerssua</span>
+          <span className="logo-name">Teka</span>
         </div>
         <div className={`status-pill ${listening ? 'on' : ''}`} title={resumeTarget ? `continuando: ${resumeTarget.subject || 'sessão anterior'}` : undefined}>
           <span className="dot" />
@@ -1034,7 +1339,7 @@ function App() {
       {showTheme && (
         <div className="theme-panel">
           <div className="settings-tabs">
-            {[['aparencia', 'aparência'], ['atalhos', 'atalhos'], ['sistema', 'sistema']].map(([id, label]) => (
+            {[['aparencia', 'visual'], ['ia', 'IA'], ['assistentes', 'assistentes'], ['voz', 'voz'], ['atalhos', 'atalhos'], ['sistema', 'sistema']].map(([id, label]) => (
               <button
                 key={id}
                 className={`settings-tab ${settingsTab === id ? 'active' : ''}`}
@@ -1048,7 +1353,73 @@ function App() {
           {settingsTab === 'atalhos' && <ShortcutsPanel onChange={setShortcutList} />}
 
           {settingsTab === 'sistema' && (
-            <SystemPanel autoScroll={autoScroll} onAutoScrollChange={changeAutoScroll} onError={setError} />
+            <SystemPanel
+              autoScroll={autoScroll}
+              onAutoScrollChange={changeAutoScroll}
+              onError={setError}
+              onUpdateResult={handleUpdateResult}
+              sttModel={sttModel}
+              provider={provider}
+              listening={listening || starting}
+            />
+          )}
+
+          {settingsTab === 'ia' && (<>
+            <div className="theme-row">
+              <span className="theme-label">modelo</span>
+              <input
+                className="model-input"
+                list="llm-models"
+                value={llmModel}
+                placeholder="automático (padrão do provedor)"
+                title="Modelo do cérebro principal"
+                onChange={(e) => {
+                  setLlmModel(e.target.value.trim());
+                  api.settings.set('llm.model', e.target.value.trim());
+                }}
+              />
+              <datalist id="llm-models">
+                {MODEL_OPTIONS.map(([id, label]) => (
+                  <option key={id} value={id}>{label}</option>
+                ))}
+              </datalist>
+            </div>
+            <AIPanel
+              providers={providers}
+              mainProvider={provider}
+              onProvidersChanged={refreshProviders}
+              compactEnabled={compactEnabled}
+              onCompactChange={(v) => changeFlag('llm.compact', setCompactEnabled, v)}
+              memory={memory}
+              translate={translate}
+              onTranslateChange={changeTranslate}
+            />
+          </>)}
+
+          {settingsTab === 'assistentes' && (
+            <AssistantsPanel
+              activeId={assistantId}
+              custom={customAssistants}
+              onSelect={selectAssistant}
+              onCustomChange={saveCustomAssistants}
+            />
+          )}
+
+          {settingsTab === 'voz' && (
+            <VoicePanel
+              sttModel={sttModel}
+              onSelectModel={selectSttModel}
+              sttLang={sttLang}
+              onLang={(l) => { setSttLang(l); api.settings.set('stt.language', l); }}
+              sttPrompt={sttPrompt}
+              onPrompt={(v) => { setSttPrompt(v); api.settings.set('stt.prompt', v); }}
+              echoFilter={echoFilter}
+              onEchoFilter={(v) => changeFlag('audio.echoFilter', setEchoFilter, v)}
+              noiseSuppression={noiseSuppression}
+              onNoise={(v) => changeFlag('audio.noiseSuppression', setNoiseSuppression, v)}
+              listening={listening || starting}
+              onError={setError}
+            />
           )}
 
           {settingsTab === 'aparencia' && (<>
@@ -1086,56 +1457,6 @@ function App() {
               type="range" min="0.9" max="1.15" step="0.05" value={theme.fontScale}
               onChange={(e) => updateTheme({ fontScale: Number(e.target.value) })}
             />
-          </div>
-          <div className="theme-row">
-            <span className="theme-label">idioma</span>
-            <div className="mode-pills slim">
-              <button
-                className={`pill ${sttLang === 'pt' ? 'active' : ''}`}
-                onClick={() => { setSttLang('pt'); api.settings.set('stt.language', 'pt'); }}
-                title="Transcrição em português (Brasil)"
-              >
-                PT-BR
-              </button>
-              <button
-                className={`pill ${sttLang === 'en' ? 'active' : ''}`}
-                onClick={() => { setSttLang('en'); api.settings.set('stt.language', 'en'); }}
-                title="Transcription in English (US)"
-              >
-                EN-US
-              </button>
-            </div>
-          </div>
-          <div className="theme-row">
-            <span className="theme-label">vocabulário</span>
-            <input
-              className="model-input"
-              value={sttPrompt}
-              placeholder="nomes próprios e jargões (ex.: Robert, OpenPerssua)"
-              title="O Whisper usa como contexto — soma-se ao vocabulário embutido (nomes IBGE + termos de reunião e tecnologia PT-BR/EN)"
-              onChange={(e) => {
-                setSttPrompt(e.target.value);
-                api.settings.set('stt.prompt', e.target.value);
-              }}
-            />
-          </div>
-          <div className="theme-row">
-            <span className="theme-label">modelo</span>
-            <input
-              className="model-input"
-              list="llm-models"
-              value={llmModel}
-              placeholder="automático (padrão do provedor)"
-              onChange={(e) => {
-                setLlmModel(e.target.value.trim());
-                api.settings.set('llm.model', e.target.value.trim());
-              }}
-            />
-            <datalist id="llm-models">
-              {MODEL_OPTIONS.map(([id, label]) => (
-                <option key={id} value={id}>{label}</option>
-              ))}
-            </datalist>
           </div>
           </>)}
         </div>
@@ -1189,6 +1510,13 @@ function App() {
       </div>
 
       <div className="profile-row">
+        <div className="select-wrap small" title="Assistente: junta modo e instruções de foco (Configurações → assistentes)">
+          <select value={assistantId} onChange={(e) => selectAssistant(e.target.value)}>
+            {[...BUILTIN_ASSISTANTS, ...customAssistants].map((a) => (
+              <option key={a.id} value={a.id}>🧩 {a.name}</option>
+            ))}
+          </select>
+        </div>
         <button className="profile-toggle" onClick={() => setShowProfile(!showProfile)}>
           🎯 meu contexto {showProfile ? '▴' : '▾'}
         </button>
@@ -1242,11 +1570,53 @@ function App() {
 
       {error && <div className="error-banner">{error}</div>}
 
+      {updateInfo && (
+        <div className="update-banner">
+          {updateInfo.upToDate ? (
+            <>
+              <span>{updateInfo.note || `você está na versão mais recente (${updateInfo.current})`}</span>
+              <button className="mini-link" onClick={() => setUpdateInfo(null)}>✕</button>
+            </>
+          ) : (
+            <>
+              <span>✦ versão {updateInfo.version} disponível (você tem {updateInfo.current})</span>
+              <div className="update-actions">
+                {updateFile ? (
+                  <button
+                    className="chip"
+                    disabled={listening || starting}
+                    title={listening ? 'Pare a escuta antes de instalar' : 'Fecha o app e abre o instalador'}
+                    onClick={() => api.update.install(updateFile)}
+                  >
+                    instalar e reiniciar
+                  </button>
+                ) : updateProgress ? (
+                  <span className="inline-status">
+                    baixando{updateProgress.total ? ` ${Math.round((updateProgress.received / updateProgress.total) * 100)}%` : '…'}
+                  </span>
+                ) : updateInfo.canInstall ? (
+                  <button className="chip" onClick={downloadUpdate}>baixar</button>
+                ) : null}
+                <button className="mini-link" onClick={() => api.update.openPage(updateInfo.pageUrl)}>ver novidades ↗</button>
+                <button className="mini-link" title="Não avisar mais desta versão" onClick={skipUpdate}>ignorar</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {summary && (
         <div className="summary">
           <div className="sug-head">
             <span className="label">✦ resumo da sessão{summary.streaming ? '…' : ''}</span>
             <div className="sug-actions">
+              <button
+                onClick={generateFollowup}
+                disabled={summary.streaming || followup?.streaming}
+                title="Escrever o e-mail de follow-up desta reunião"
+              >
+                ✉ e-mail
+              </button>
               <button
                 onClick={() => copyText(summary.text)}
                 disabled={!summary.text}
@@ -1258,6 +1628,19 @@ function App() {
             </div>
           </div>
           <div className="sug-text">{summary.text || 'gerando resumo…'}</div>
+        </div>
+      )}
+
+      {followup && (
+        <div className="summary">
+          <div className="sug-head">
+            <span className="label">✉ e-mail de follow-up{followup.streaming ? '…' : ''}</span>
+            <div className="sug-actions">
+              <button onClick={() => copyText(followup.text)} disabled={!followup.text} title="Copiar e-mail">copiar</button>
+              <button onClick={() => setFollowup(null)} title="Dispensar">✕</button>
+            </div>
+          </div>
+          <div className="sug-text">{followup.text || 'escrevendo…'}</div>
         </div>
       )}
 
@@ -1325,7 +1708,7 @@ function App() {
       )}
 
       <div className="transcript" ref={transcriptBoxRef} onScroll={onTranscriptScroll}>
-        {transcript.length === 0 && !answer && !suggestion && !summary && !screenResult && (
+        {transcript.length === 0 && !answer && !suggestion && !summary && !followup && !screenResult && (
           <div className="transcript-empty">
             <span className="big">✦</span>
             A transcrição da conversa aparece aqui.
@@ -1339,9 +1722,10 @@ function App() {
           </div>
         )}
         {transcript.map((t, i) => (
-          <div key={i} className={`bubble ${t.source}`}>
+          <div key={t.id ?? i} className={`bubble ${t.source}`}>
             <span className="who">{t.source === 'mic' ? 'Você' : 'Reunião'}</span>
             {t.text}
+            {t.translation && <span className="translation">{t.translation}</span>}
           </div>
         ))}
         <div ref={transcriptEndRef} />
@@ -1404,7 +1788,7 @@ function App() {
         <div className="onboarding">
           <div className="ob-card">
             <div className="ob-steps">
-              {[0, 1, 2].map((i) => (
+              {[0, 1, 2, 3].map((i) => (
                 <span key={i} className={`ob-dot ${onboarding === i ? 'active' : ''} ${onboarding > i ? 'done' : ''}`} />
               ))}
             </div>
@@ -1464,13 +1848,21 @@ function App() {
               </>
             )}
 
+            {onboarding === 3 && (
+              <>
+                <h3>Verificação</h3>
+                <p className="ob-desc">Um teste rápido de tudo que a escuta usa. Fale algo quando o microfone estiver sendo testado.</p>
+                <DiagnosticsPanel sttModel={sttModel} provider={provider} disabled={listening || starting} />
+              </>
+            )}
+
             <div className="ob-nav">
               <button className="auth-link" onClick={finishOnboarding}>pular</button>
               <div style={{ flex: 1 }} />
               {onboarding > 0 && (
                 <button className="chip" onClick={() => setOnboarding(onboarding - 1)}>voltar</button>
               )}
-              {onboarding < 2
+              {onboarding < 3
                 ? <button className="send-btn wide" onClick={() => setOnboarding(onboarding + 1)}>próximo</button>
                 : <button className="send-btn wide" onClick={finishOnboarding}>concluir ✦</button>}
             </div>

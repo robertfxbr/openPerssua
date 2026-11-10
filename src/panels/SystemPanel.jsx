@@ -1,12 +1,35 @@
 import React, { useEffect, useState } from 'react';
+import { DiagnosticsPanel } from './DiagnosticsPanel';
 
-const api = window.openperssua;
+const api = window.teka;
 
 // Aba "sistema" do painel de configurações: monitor do overlay, rolagem
-// automática da transcrição e logs de debug.
-export function SystemPanel({ autoScroll, onAutoScrollChange, onError }) {
+// automática da transcrição, logs, atualização e diagnóstico.
+export function SystemPanel({
+  autoScroll, onAutoScrollChange, onError, onUpdateResult, sttModel, provider, listening,
+}) {
   const [displays, setDisplays] = useState([]);
   const [logStatus, setLogStatus] = useState('');
+  const [autoUpdate, setAutoUpdate] = useState(true);
+  const [updateStatus, setUpdateStatus] = useState('');
+  const [showDiag, setShowDiag] = useState(false);
+
+  useEffect(() => {
+    api.settings.get('update.autoCheck').then((v) => setAutoUpdate(v !== false));
+  }, []);
+
+  function changeAutoUpdate(value) {
+    setAutoUpdate(value);
+    api.settings.set('update.autoCheck', value);
+  }
+
+  async function checkNow() {
+    setUpdateStatus('verificando…');
+    const r = await api.update.check();
+    if (!r?.ok) setUpdateStatus(`falhou: ${r?.error || 'sem resposta'}`);
+    else if (r.available) { setUpdateStatus(`versão ${r.version} disponível`); onUpdateResult?.({ ...r, manual: true }); }
+    else setUpdateStatus(r.note || `você está na versão mais recente (${r.current})`);
+  }
 
   function refreshDisplays() {
     api.overlay.listDisplays().then(setDisplays).catch(() => setDisplays([]));
@@ -75,6 +98,28 @@ export function SystemPanel({ autoScroll, onAutoScrollChange, onError }) {
         <button className="chip" onClick={openLogs}>abrir pasta</button>
         {logStatus && <span className="inline-status">{logStatus}</span>}
       </div>
+      <div className="theme-row">
+        <span className="theme-label">atualizar</span>
+        <div className="mode-pills slim">
+          <button
+            className={`pill ${autoUpdate ? 'active' : ''}`}
+            onClick={() => changeAutoUpdate(true)}
+            title="Procura versão nova no GitHub ao abrir e a cada 6 horas; nada é instalado sem você pedir"
+          >
+            avisar
+          </button>
+          <button className={`pill ${!autoUpdate ? 'active' : ''}`} onClick={() => changeAutoUpdate(false)}>não</button>
+        </div>
+        <button className="chip" onClick={checkNow}>verificar</button>
+      </div>
+      {updateStatus && <div className="panel-note">{updateStatus}</div>}
+      <div className="theme-row">
+        <span className="theme-label">diagnóstico</span>
+        <button className="chip" onClick={() => setShowDiag(!showDiag)}>
+          {showDiag ? 'esconder' : 'testar mic, áudio, transcrição e IA'}
+        </button>
+      </div>
+      {showDiag && <DiagnosticsPanel sttModel={sttModel} provider={provider} disabled={listening} />}
     </>
   );
 }

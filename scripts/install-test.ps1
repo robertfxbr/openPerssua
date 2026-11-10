@@ -1,9 +1,9 @@
 Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
-$installer = 'E:\persuanew\Persua2\openperssua\release\OpenPerssua Setup 0.1.2.exe'
+$installer = 'E:\persuanew\Persua2\openperssua\release\Teka Setup 0.1.2.exe'
 $p = Start-Process $installer -ArgumentList '/S' -PassThru
 $p.WaitForExit(120000) | Out-Null
 Start-Sleep 3
-$installed = "$env:LOCALAPPDATA\Programs\OpenPerssua\OpenPerssua.exe"
+$installed = "$env:LOCALAPPDATA\Programs\Teka\Teka.exe"
 if (Test-Path $installed) {
     Write-Output "INSTALADO: $installed"
     $app = Start-Process $installed -PassThru

@@ -6,8 +6,8 @@ const { execFileSync } = require('child_process');
 const { build, Platform } = require('electron-builder');
 
 const sharedConfig = {
-  appId: 'com.openperssua.app',
-  productName: 'OpenPerssua',
+  appId: 'com.teka.app',
+  productName: 'Teka',
   directories: { output: 'release' },
   files: ['electron/**/*', 'dist/**/*', 'package.json'],
   asar: false,
@@ -16,7 +16,7 @@ const sharedConfig = {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
-    shortcutName: 'OpenPerssua',
+    shortcutName: 'Teka',
   },
 };
 
