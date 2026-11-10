@@ -119,8 +119,11 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
   som; a fala repetida sai da transcrição. Supressão de ruído configurável
 - **Diagnóstico** de microfone, áudio do sistema, transcrição e cérebro, no
   onboarding e na aba "sistema"
-- **Aviso de atualização** pelo GitHub Releases; o instalador baixado só roda
-  se o SHA-512 conferir com o `latest.yml` da release
+- **Atualização leve** pelo GitHub Releases: a versão nova baixa só o código
+  do app (~500 KB), confere o SHA-512 e reinicia, sem reinstalar. Se o pacote
+  novo não abrir, o app volta sozinho para o código do instalador. O
+  instalador completo só volta quando a release troca o Electron ou um módulo
+  nativo; ele também só roda se o SHA-512 conferir com o `latest.yml`
 - **Refresh token OAuth** do ChatGPT: o login não expira mais a cada sessão
 - **Modo mini** (pílula compacta com a sugestão ao vivo), **medidores de
   áudio** mic/sistema, **temas** (escuro/claro, 3 acentos, opacidade, fonte)
@@ -147,11 +150,13 @@ Pré-requisitos conforme o provedor escolhido:
 
 ```
 electron/
-  main.js                  bootstrap + bandeja + ações dos atalhos
+  bootstrap.js             entrada: escolhe entre o código do instalador e a atualização leve
+  main.js                  janela + bandeja + ações dos atalhos
   preload.js               contextBridge com allowlist
   windows/OverlayWindow.js overlay always-on-top / click-through
   shortcuts/               atalhos globais configuráveis
-  system/                  monitores, captura de tela, logs, atualização
+  system/                  monitores, captura de tela, logs, atualização (updater + appBundle)
+scripts/build-update.js    gera o pacote da atualização leve
   stt/WhisperService.js    whisper.cpp server + sessões + cap de buffer
   llm/LLMRouter.js         seleção de provedor
   llm/messageFormat.js     mensagens com imagem no formato de cada API
@@ -174,6 +179,22 @@ npm install        # se better-sqlite3 falhar por falta de Visual Studio,
                    # baixa o binário nativo certo para o Electron na hora de empacotar)
 npm run dist:win   # gera release/Teka Setup X.Y.Z.exe (NSIS)
 ```
+
+### Publicando uma versão
+
+1. Suba `version` no `package.json`.
+2. `npm run dist:update` gera `release/teka-app-X.Y.Z.asar` e
+   `release/teka-update.json`. Se o Electron ou alguma dependência de
+   `dependencies` mudou desde o último instalador, o script recusa: aí rode
+   `npm run dist:win`, que grava a nova casca mínima (`teka.shellMin` e
+   `teka.shellDeps` no `package.json`) e gera o instalador.
+3. Crie a release `vX.Y.Z` no GitHub com os dois arquivos acima. Inclua
+   também o `Teka Setup X.Y.Z.exe` e o `latest.yml`, para quem ainda não tem
+   a casca mínima.
+
+Quem já tem o app recebe o aviso, baixa só o pacote leve e reinicia. O
+pacote fica em `<pasta de dados>/app-updates`. Se ele falhar ao abrir, o erro
+vai para `app-updates/ultimo-erro.txt` e o app volta para a versão do instalador.
 
 Notas de ambiente:
 - Rode com um Node.js standalone (`C:\Program Files\nodejs\node.exe`). Se o

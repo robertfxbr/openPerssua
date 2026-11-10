@@ -22,6 +22,7 @@ const { ShortcutManager } = require('./shortcuts/ShortcutManager');
 const { moveToNextDisplay } = require('./system/displays');
 const { openLogsFolder } = require('./system/logs');
 const updater = require('./system/updater');
+const { confirmBoot } = require('./system/appBundle');
 
 const UPDATE_FIRST_CHECK_MS = 20000;          // espera o app assentar
 const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // e repete a cada 6 h
@@ -135,6 +136,10 @@ async function bootstrap() {
   });
 
   createOverlayWindow({ isDev });
+  // Atualização leve: a janela abriu, então o pacote está bom (ver bootstrap.js)
+  if (global.tekaBundle) {
+    getOverlayWindow()?.webContents.once('did-finish-load', () => confirmBoot(app.getPath('userData')));
+  }
   registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts });
   createTray(settingsStore);
   await shortcuts.init();

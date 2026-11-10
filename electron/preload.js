@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('teka', {
     download: () => invoke('update:download'),
     install: (file) => invoke('update:install', file),
     openPage: (url) => invoke('update:open-page', url),
+    version: () => invoke('update:version'),
     onAvailable: (cb) => on('update:available', cb),
     onProgress: (cb) => on('update:progress', cb),
   },

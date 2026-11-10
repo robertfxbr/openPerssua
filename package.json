@@ -4,13 +4,23 @@
   "version": "0.4.0",
   "description": "Open-source desktop AI meeting copilot overlay. Works with the LLM you already have, no extra API bill: ChatGPT login, Claude Code CLI, Codex CLI, Gemini CLI, Ollama or a local server (paid APIs optional). Portfolio reimplementation based on public behavior analysis.",
   "license": "MIT",
-  "main": "electron/main.js",
+  "main": "electron/bootstrap.js",
+  "teka": {
+    "shellMin": "0.4.0",
+    "shellDeps": {
+      "electron": "38.8.6",
+      "better-sqlite3": "12.11.1",
+      "electron-audio-loopback": "1.0.6",
+      "electron-log": "5.4.4"
+    }
+  },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron . --dev\"",
     "build": "vite build",
     "start": "electron .",
     "dist": "npm run build && node build-installer.js",
-    "dist:win": "npm run build && node build-installer.js"
+    "dist:win": "npm run build && node build-installer.js",
+    "dist:update": "npm run build && node scripts/build-update.js"
   },
   "build": {
     "appId": "com.teka.app",
@@ -51,6 +61,7 @@
     "electron-log": "^5.4.3"
   },
   "devDependencies": {
+    "@electron/asar": "^3.4.1",
     "@vitejs/plugin-react": "^4.3.0",
     "concurrently": "^9.0.0",
     "electron": "^38.0.0",

@@ -503,7 +503,13 @@ function App() {
     const r = await api.update.download();
     setUpdateProgress(null);
     if (!r?.ok) { setError(`atualização: ${r?.error || 'falha no download'}`); return; }
-    setUpdateFile(r.file);
+    // pacote leve já está no lugar: falta só reiniciar
+    setUpdateFile(r.mode === 'light' ? 'light' : r.file);
+  }
+
+  function formatSize(bytes) {
+    if (!bytes) return '';
+    return bytes < 1024 * 1024 ? ` (${Math.max(1, Math.round(bytes / 1024))} KB)` : ` (${(bytes / 1024 / 1024).toFixed(1)} MB)`;
   }
 
   function skipUpdate() {
@@ -1585,17 +1591,27 @@ function App() {
                   <button
                     className="chip"
                     disabled={listening || starting}
-                    title={listening ? 'Pare a escuta antes de instalar' : 'Fecha o app e abre o instalador'}
+                    title={listening
+                      ? 'Pare a escuta antes de atualizar'
+                      : updateFile === 'light' ? 'Fecha e abre o app de novo já na versão nova' : 'Fecha o app e abre o instalador'}
                     onClick={() => api.update.install(updateFile)}
                   >
-                    instalar e reiniciar
+                    {updateFile === 'light' ? 'reiniciar agora' : 'instalar e reiniciar'}
                   </button>
                 ) : updateProgress ? (
                   <span className="inline-status">
                     baixando{updateProgress.total ? ` ${Math.round((updateProgress.received / updateProgress.total) * 100)}%` : '…'}
                   </span>
                 ) : updateInfo.canInstall ? (
-                  <button className="chip" onClick={downloadUpdate}>baixar</button>
+                  <button
+                    className="chip"
+                    onClick={downloadUpdate}
+                    title={updateInfo.mode === 'light'
+                      ? 'Baixa só o código novo; não precisa reinstalar'
+                      : 'Esta versão troca o Electron ou módulos nativos: precisa do instalador completo'}
+                  >
+                    {updateInfo.mode === 'light' ? `atualizar${formatSize(updateInfo.size)}` : `baixar instalador${formatSize(updateInfo.size)}`}
+                  </button>
                 ) : null}
                 <button className="mini-link" onClick={() => api.update.openPage(updateInfo.pageUrl)}>ver novidades ↗</button>
                 <button className="mini-link" title="Não avisar mais desta versão" onClick={skipUpdate}>ignorar</button>

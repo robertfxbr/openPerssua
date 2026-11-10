@@ -318,6 +318,7 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   });
   ipcMain.handle('update:install', (_e, file) => updater.installUpdate(file));
   ipcMain.handle('update:open-page', (_e, url) => updater.openReleasesPage(url));
+  ipcMain.handle('update:version', () => updater.versionInfo());
 }
 
 module.exports = { registerIpc, disposeIpc };

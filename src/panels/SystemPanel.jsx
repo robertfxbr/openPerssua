@@ -13,9 +13,11 @@ export function SystemPanel({
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [updateStatus, setUpdateStatus] = useState('');
   const [showDiag, setShowDiag] = useState(false);
+  const [version, setVersion] = useState(null);
 
   useEffect(() => {
     api.settings.get('update.autoCheck').then((v) => setAutoUpdate(v !== false));
+    api.update.version().then(setVersion).catch(() => setVersion(null));
   }, []);
 
   function changeAutoUpdate(value) {
@@ -27,7 +29,12 @@ export function SystemPanel({
     setUpdateStatus('verificando…');
     const r = await api.update.check();
     if (!r?.ok) setUpdateStatus(`falhou: ${r?.error || 'sem resposta'}`);
-    else if (r.available) { setUpdateStatus(`versão ${r.version} disponível`); onUpdateResult?.({ ...r, manual: true }); }
+    else if (r.available) {
+      setUpdateStatus(r.needsInstaller
+        ? `versão ${r.version} disponível; esta precisa do instalador completo`
+        : `versão ${r.version} disponível`);
+      onUpdateResult?.({ ...r, manual: true });
+    }
     else setUpdateStatus(r.note || `você está na versão mais recente (${r.current})`);
   }
 
@@ -112,6 +119,12 @@ export function SystemPanel({
         </div>
         <button className="chip" onClick={checkNow}>verificar</button>
       </div>
+      {version && (
+        <div className="panel-note">
+          versão {version.version}
+          {version.light ? ` (atualização leve sobre o instalador ${version.shellVersion})` : ''}
+        </div>
+      )}
       {updateStatus && <div className="panel-note">{updateStatus}</div>}
       <div className="theme-row">
         <span className="theme-label">diagnóstico</span>

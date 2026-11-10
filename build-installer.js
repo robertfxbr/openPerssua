@@ -4,6 +4,7 @@
 // 3) build --prepackaged → instalador NSIS a partir do win-unpacked completo
 const { execFileSync } = require('child_process');
 const { build, Platform } = require('electron-builder');
+const { currentShellDeps, diffShellDeps, readPkg, writePkg } = require('./scripts/shell-deps');
 
 const sharedConfig = {
   appId: 'com.teka.app',
@@ -20,7 +21,23 @@ const sharedConfig = {
   },
 };
 
+// Atualização leve (scripts/build-update.js) só roda sobre uma casca com o
+// mesmo Electron e os mesmos módulos. Se eles mudaram, este instalador vira
+// a nova casca mínima: grava shellMin e shellDeps antes de empacotar, para
+// o package.json de dentro do app já sair certo.
+function recordShell() {
+  const pkg = readPkg();
+  const deps = currentShellDeps(pkg);
+  const changed = diffShellDeps(pkg.teka?.shellDeps, deps);
+  if (!changed.length) return;
+  pkg.teka = { ...(pkg.teka || {}), shellMin: pkg.version, shellDeps: deps };
+  writePkg(pkg);
+  console.log(`casca nova a partir da ${pkg.version}:\n  ${changed.join('\n  ')}`);
+}
+
 async function main() {
+  recordShell();
+
   // Fase 1: app sem whisper-bin
   console.log('fase 1: empacotando app…');
   await build({ targets: Platform.WINDOWS.createTarget(['dir']), config: sharedConfig });
