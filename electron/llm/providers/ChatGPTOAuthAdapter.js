@@ -16,6 +16,11 @@ const REDIRECT_PORTS = [1455, 1457];
 const SCOPES = 'openid profile email offline_access';
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // usuário tem 5 min para concluir no navegador
 
+// Níveis de raciocínio para a sugestão ao vivo, do mais rápido ao padrão.
+// "low" fica por último porque todo modelo de raciocínio aceita.
+const FAST_EFFORTS = ['none', 'minimal', 'low'];
+const rejectedEffort = new Set(); // "modelo|nível" recusados nesta execução
+
 class ChatGPTOAuthAdapter {
   constructor({ tokenStore }) {
     this.id = 'chatgpt-oauth';
@@ -167,24 +172,24 @@ class ChatGPTOAuthAdapter {
   // Tokens OAuth do login ChatGPT NÃO são aceitos em api.openai.com — o
   // Codex CLI consome o backend próprio (chatgpt.com/backend-api/codex),
   // com o account-id extraído do JWT e header beta de responses.
-  async chatStream({ messages, model, onChunk, signal }) {
+  async chatStream({ messages, model, onChunk, signal, fast }) {
     let token = await this.getValidToken();
     if (!token?.access_token) throw new Error('não autenticado — faça login com ChatGPT');
 
     const { toResponsesInput } = require('../messageFormat');
     const input = toResponsesInput(messages);
 
-    const body = (modelName) => JSON.stringify({
+    const body = (modelName, effort) => JSON.stringify({
       model: modelName,
       input,
       stream: true,
       store: false,
       instructions: 'You are a helpful meeting copilot assistant.',
       // Copiloto ao vivo: latência importa mais que raciocínio profundo
-      reasoning: { effort: 'low' },
+      reasoning: { effort },
     });
 
-    const doRequest = (accessToken, modelName) => {
+    const doRequest = (accessToken, modelName, effort) => {
       const accountId = extractAccountId(accessToken);
       return fetch('https://chatgpt.com/backend-api/codex/responses', {
         method: 'POST',
@@ -194,30 +199,41 @@ class ChatGPTOAuthAdapter {
           'OpenAI-Beta': 'responses=experimental',
           ...(accountId ? { 'chatgpt-account-id': accountId } : {}),
         },
-        body: body(modelName),
+        body: body(modelName, effort),
         signal,
       });
     };
 
     const DEFAULT_MODEL = 'gpt-6.1-sol'; // padrão do backend Codex (contas ChatGPT)
-    let res = await doRequest(token.access_token, model || DEFAULT_MODEL);
+    let modelName = model || DEFAULT_MODEL;
+    // Sugestão ao vivo (fast): tenta o raciocínio mais leve primeiro. Cada
+    // modelo aceita um conjunto diferente; o que ele recusar não é tentado de
+    // novo enquanto o app estiver aberto.
+    const efforts = () => (fast ? FAST_EFFORTS : ['low']).filter((e) => !rejectedEffort.has(`${modelName}|${e}`));
+    let tries = efforts();
+    let res = await doRequest(token.access_token, modelName, tries[0]);
 
     // 401: access_token expirado apesar do exp do JWT — força refresh e
     // tenta uma vez com o token novo (conta "desconectando" resolvida).
     if (res.status === 401 && token.refresh_token) {
       token = await this.refreshToken(token);
-      res = await doRequest(token.access_token, model || DEFAULT_MODEL);
+      res = await doRequest(token.access_token, modelName, tries[0]);
     }
 
-    // Fallback automático: modelo recusado pelo backend (ex.: tier não
-    // liberado p/ conta ChatGPT) → tenta uma vez com o modelo padrão.
-    if (!res.ok && res.status === 400 && model && model !== DEFAULT_MODEL) {
+    while (!res.ok && res.status === 400) {
       const errText = await res.text();
-      if (errText.includes('model is not supported') || errText.includes('model_not_found')) {
-        res = await doRequest(token.access_token, DEFAULT_MODEL);
+      // Fallback automático: modelo recusado pelo backend (ex.: tier não
+      // liberado p/ conta ChatGPT) → tenta uma vez com o modelo padrão.
+      if (modelName !== DEFAULT_MODEL && (errText.includes('model is not supported') || errText.includes('model_not_found'))) {
+        modelName = DEFAULT_MODEL;
+        tries = efforts();
+      } else if (tries.length > 1 && /reasoning|effort|unsupported value/i.test(errText)) {
+        rejectedEffort.add(`${modelName}|${tries[0]}`);
+        tries = tries.slice(1);
       } else {
         throw new Error(`Codex backend ${res.status}: ${errText}`);
       }
+      res = await doRequest(token.access_token, modelName, tries[0]);
     }
     if (!res.ok) throw new Error(`Codex backend ${res.status}: ${await res.text()}`);
 

@@ -97,6 +97,7 @@ contextBridge.exposeInMainWorld('teka', {
     endSession: (sessionId) => invoke('db:end-session', sessionId),
     resumeSession: (sessionId) => invoke('db:resume-session', sessionId),
     updateSubject: (sessionId, subject) => invoke('db:update-subject', { id: sessionId, subject }),
+    setKind: (sessionId, kind) => invoke('db:set-kind', { id: sessionId, kind }),
     deleteSession: (sessionId) => invoke('db:delete-session', sessionId),
     clearAll: () => invoke('db:clear-all'),
     getStats: () => invoke('db:get-stats'),

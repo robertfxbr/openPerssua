@@ -56,7 +56,7 @@ function sessionToMarkdown({ session, transcriptions, messages }) {
 
 // Tela de histórico: lista, renomear, excluir, limpar tudo, ver detalhes,
 // exportar em Markdown e retomar uma sessão antiga.
-export function HistoryView({ onBack, onResume, onError, copyText, listening, activeSessionId, model, assistant }) {
+export function HistoryView({ onBack, onResume, onError, copyText, listening, activeSessionId, model, assistant, profile }) {
   const [sessions, setSessions] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [stats, setStats] = useState(null);
@@ -129,6 +129,14 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
     api.db.getStats().then(setStats).catch(() => {});
   }
 
+  async function toggleInterview() {
+    const id = detail.session.id;
+    const kind = detail.session.kind === 'interview' ? null : 'interview';
+    await api.db.setKind(id, kind);
+    setDetail((d) => (d?.session.id === id ? { ...d, session: { ...d.session, kind } } : d));
+    setSessions((list) => list.map((x) => (x.id === id ? { ...x, kind } : x)));
+  }
+
   // Resumo ou e-mail de uma sessão antiga, gravados junto das mensagens dela
   async function generate(kind) {
     if (!detail || generating) return;
@@ -139,6 +147,8 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
       const lastSummary = [...detail.messages].reverse().find((m) => m.content?.startsWith(SUMMARY_TAG));
       const text = await api.llm.chat({
         mode: kind === 'email' ? 'email' : 'summary',
+        summaryKind: detail.session.kind === 'interview' ? 'interview' : undefined,
+        profile: detail.session.kind === 'interview' ? profile : undefined,
         transcript: lines.slice(-MAX_DOC_LINES),
         summary: kind === 'email' && lastSummary ? lastSummary.content.replace(`${SUMMARY_TAG}\n`, '') : undefined,
         assistant: kind === 'email' ? assistant : undefined,
@@ -295,6 +305,13 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
                 title={listening ? 'Pare a escuta atual antes de retomar outra sessão' : 'Volta a ouvir e adiciona as falas novas nesta sessão'}
               >
                 ▶ continuar sessão
+              </button>
+              <button
+                className={`chip ${detail.session.kind === 'interview' ? 'active' : ''}`}
+                onClick={toggleInterview}
+                title="Marca esta sessão como entrevista: o resumo passa a avaliar perguntas e respostas"
+              >
+                {detail.session.kind === 'interview' ? '✓ entrevista' : 'é entrevista?'}
               </button>
               <button className="chip" onClick={() => generate('summary')} disabled={Boolean(generating)} title="Gerar (de novo) o resumo desta sessão">
                 {generating === 'summary' ? 'resumindo…' : '✦ resumo'}

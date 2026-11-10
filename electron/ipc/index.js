@@ -14,6 +14,7 @@ const {
   setClickThrough, toggleOverlay, setCompactMode, repaintOverlay, persistWindowState,
 } = require('../windows/OverlayWindow');
 const { buildCopilotMessages, buildSummaryMessages } = require('../prompts/meeting');
+const { buildInterviewSummaryMessages } = require('../prompts/interview');
 const { buildAssistMessages } = require('../prompts/assist');
 const { buildScreenMessages } = require('../prompts/screen');
 const {
@@ -34,7 +35,9 @@ function buildMessages(req) {
   const assistant = text(req.assistant, 4000);
   switch (req.mode) {
     case 'summary':
-      return buildSummaryMessages({ transcript: req.transcript, memory });
+      return req.summaryKind === 'interview'
+        ? buildInterviewSummaryMessages({ transcript: req.transcript, memory, profile: text(req.profile, 6000) })
+        : buildSummaryMessages({ transcript: req.transcript, memory });
     case 'email':
       return buildFollowupMessages({
         transcript: req.transcript, memory, summary: text(req.summary, 8000), assistant,
@@ -251,6 +254,8 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
       messages: buildMessages(req),
       model: req.model,
       task: taskFor(req),
+      // sugestão ao vivo: o adaptador usa o raciocínio mais leve que o modelo aceitar
+      fast: taskFor(req) === 'assist',
       signal: controller.signal,
       onChunk: (delta) => send('llm:stream-chunk', { streamId, delta }),
     })
@@ -290,6 +295,7 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   ipcMain.handle('db:end-session', (_e, id) => { db.endSession(id); return { ok: true }; });
   ipcMain.handle('db:resume-session', (_e, id) => db.resumeSession(id));
   ipcMain.handle('db:update-subject', (_e, { id, subject }) => db.updateSubject(id, subject));
+  ipcMain.handle('db:set-kind', (_e, { id, kind }) => db.setKind(id, kind));
   ipcMain.handle('db:delete-session', (_e, id) => db.deleteSession(id));
   ipcMain.handle('db:clear-all', () => db.clearAll());
   ipcMain.handle('db:get-stats', () => db.getStats());

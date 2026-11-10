@@ -1201,3 +1201,39 @@ html, body, #root {
 }
 
 .answer .copy-doc { display: block; margin-top: 6px; }
+
+/* ===== entrevista: resposta em camadas ===== */
+.layered { display: flex; flex-direction: column; gap: 6px; }
+.layered-lead {
+  font-size: 1.08em;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+.layered-points { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
+.layered-points li { line-height: 1.4; }
+.layered-claim { color: var(--text); }
+.layered-proof { color: var(--text-dim); }
+.layered-extra { color: var(--text-dim); white-space: pre-wrap; }
+.layered-push {
+  margin-top: 2px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--lilac);
+  background: var(--lilac-soft);
+  border-radius: 6px;
+  line-height: 1.4;
+}
+.layered-push-label {
+  font-size: 0.82em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--lilac);
+  margin-right: 4px;
+}
+.profile-warning {
+  margin: -2px 14px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.chip.active { border-color: var(--mint); color: var(--mint); background: var(--mint-soft); }

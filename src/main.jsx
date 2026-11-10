@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { detectQuestion } from './assist/questionDetector';
+import { leadLine } from './assist/layered';
+import { LayeredAnswer } from './assist/LayeredAnswer';
 import { HistoryView } from './history/HistoryView';
 import { ShortcutsPanel } from './panels/ShortcutsPanel';
 import { SystemPanel } from './panels/SystemPanel';
@@ -17,6 +19,7 @@ import './styles.css';
 const api = window.teka;
 const MAX_TRANSCRIPT_LINES = 500; // cap para não crescer sem limite em reuniões longas
 const ASSIST_CONTEXT_LINES = 40;  // janela de contexto enviada ao LLM no auto-assist
+const INTERVIEW_CONTEXT_LINES = 24; // entrevista: menos texto, primeira linha chega antes
 const ASSIST_COOLDOWN_MS = 12000; // mínimo entre sugestões automáticas
 const PENDING_QUESTION_MS = 4500; // espera a continuação de pergunta sem "?"
 const PENDING_QUESTION_DRAFT_MS = 1200; // no modo entrevista, o rascunho começa rápido
@@ -66,6 +69,14 @@ const REFINE_CHIPS = [
   ['Mais formal', 'Use tom mais formal e profissional.'],
   ['Em inglês', 'Responda em inglês.'],
   ['Exemplo prático', 'Inclua um exemplo prático e concreto na resposta.'],
+];
+
+// Na entrevista os ajustes mantêm o formato em camadas e ajudam a argumentar
+const INTERVIEW_REFINE_CHIPS = [
+  ['Mais curto', 'Mantenha o formato, com a primeira linha mais curta e só 2 linhas "•" bem enxutas.'],
+  ['Mais forte', 'Mantenha o formato e deixe os argumentos mais convincentes: troque generalidades por provas concretas do perfil, com números.'],
+  ['Outra objeção', 'Mantenha o formato e troque a linha "Se insistirem" por uma objeção provável mais difícil, com a resposta.'],
+  ['Em inglês', 'Mantenha o formato e responda em inglês.'],
 ];
 
 const WHISPER_MODELS = [
@@ -786,7 +797,8 @@ function App() {
     if (q) lastQuestionRef.current = q;
     setError('');
     setSummary(null);
-    setSuggestion({ question: q || '', text: '', streaming: true, draft: !!opts.draft });
+    const layered = assistModeRef.current === 'interview';
+    setSuggestion({ question: q || '', text: '', streaming: true, draft: !!opts.draft, layered });
     let acc = '';
     let streamErr = null;
 
@@ -822,7 +834,7 @@ function App() {
       const { streamId } = await api.llm.chatStream({
         mode: 'assist',
         question: q,
-        ...liveContext(ASSIST_CONTEXT_LINES),
+        ...liveContext(layered ? INTERVIEW_CONTEXT_LINES : ASSIST_CONTEXT_LINES),
         assistant: assistantRef.current || undefined,
         assistMode: assistModeRef.current,
         profile: profileRef.current,
@@ -866,9 +878,14 @@ function App() {
     setFollowup(null);
     if (lines.length < 3 || !providerRef.current) return;
     setSummary({ text: '', streaming: true });
+    // Entrou em modo Entrevista no meio da sessão: a sessão passa a ser de entrevista
+    const interview = assistModeRef.current === 'interview';
+    if (interview && dbId) api.db.setKind(dbId, 'interview');
     try {
       const text = await api.llm.chat({
         mode: 'summary',
+        summaryKind: interview ? 'interview' : undefined,
+        profile: interview ? profileRef.current : undefined,
         transcript: ctx.transcript,
         memory: ctx.memory,
         model: llmModelRef.current || undefined,
@@ -945,7 +962,10 @@ function App() {
         if (!r?.ok) throw new Error('a sessão escolhida não existe mais');
         dbId = resumeId;
       } else {
-        dbId = (await api.db.createSession({ subject: 'Sessão overlay' })).id;
+        dbId = (await api.db.createSession({
+          subject: 'Sessão overlay',
+          kind: assistModeRef.current === 'interview' ? 'interview' : undefined,
+        })).id;
       }
       const { sessionId: micSttId } = await api.stt.startSession({
         source: 'mic',
@@ -1290,7 +1310,7 @@ function App() {
           {listening && <span className="compact-timer">{formatClock(elapsedMs)}</span>}
           <div className="compact-text">
             {suggestion?.text
-              ? suggestion.text.slice(0, 140)
+              ? (suggestion.layered ? leadLine(suggestion.text) : suggestion.text).slice(0, 140)
               : listening ? 'ouvindo…' : 'Teka'}
             {suggestion?.streaming && <span className="caret">▌</span>}
           </div>
@@ -1321,6 +1341,7 @@ function App() {
         activeSessionId={sessionRef.current?.dbId || null}
         model={llmModel || undefined}
         assistant={assistantRef.current || undefined}
+        profile={profile}
       />
     );
   }
@@ -1528,6 +1549,12 @@ function App() {
         </button>
         {profile.trim() && !showProfile && <span className="profile-dot" title="Contexto preenchido" />}
       </div>
+      {assistMode === 'interview' && !profile.trim() && !showProfile && (
+        <div className="profile-warning">
+          sem o seu contexto, as respostas saem com lacunas [assim].{' '}
+          <button className="mini-link" onClick={() => setShowProfile(true)}>colar currículo</button>
+        </div>
+      )}
       {showProfile && (
         <textarea
           className="profile-editor"
@@ -1679,10 +1706,12 @@ function App() {
             </div>
           </div>
           {suggestion.question && <div className="sug-question">“{suggestion.question}”</div>}
-          <div className="sug-text">{suggestion.text || 'pensando…'}</div>
+          {suggestion.layered
+            ? <LayeredAnswer text={suggestion.text} />
+            : <div className="sug-text">{suggestion.text || 'pensando…'}</div>}
           {!suggestion.streaming && suggestion.text && (
             <div className="sug-chips">
-              {REFINE_CHIPS.map(([label, instruction]) => (
+              {(suggestion.layered ? INTERVIEW_REFINE_CHIPS : REFINE_CHIPS).map(([label, instruction]) => (
                 <button
                   key={label}
                   className="chip"

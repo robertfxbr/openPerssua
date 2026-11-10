@@ -6,6 +6,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+// Só tipos conhecidos entram no banco
+function cleanKind(kind) {
+  return kind === 'interview' ? 'interview' : null;
+}
+
 class DatabaseManager {
   constructor(userDataDir) {
     // Instalações da época do nome OpenPerssua mantêm o arquivo antigo
@@ -22,7 +27,16 @@ class DatabaseManager {
     // sessão deixaria mensagens e transcrições órfãs no banco.
     this.db.pragma('foreign_keys = ON');
     this.db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+    this.migrate();
     this.closeStaleSessions();
+  }
+
+  // Colunas que vieram depois do schema original. O CREATE TABLE IF NOT
+  // EXISTS não mexe em tabela que já existe, então elas entram aqui.
+  migrate() {
+    const cols = this.db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
+    // kind: 'interview' para entrevista (muda o resumo); null para o resto
+    if (!cols.includes('kind')) this.db.exec('ALTER TABLE sessions ADD COLUMN kind TEXT');
   }
 
   // Sessões que ficaram 'active' porque o app fechou (ou travou) no meio da
@@ -42,12 +56,17 @@ class DatabaseManager {
 
   close() { this.db?.close(); }
 
-  createSession({ subject, model } = {}) {
+  createSession({ subject, model, kind } = {}) {
     const id = crypto.randomUUID();
     this.db.prepare(
-      'INSERT INTO sessions (id, started_at, subject, model) VALUES (?, ?, ?, ?)'
-    ).run(id, Date.now(), subject || null, model || null);
+      'INSERT INTO sessions (id, started_at, subject, model, kind) VALUES (?, ?, ?, ?, ?)'
+    ).run(id, Date.now(), subject || null, model || null, cleanKind(kind));
     return { id };
+  }
+
+  setKind(id, kind) {
+    this.db.prepare('UPDATE sessions SET kind = ? WHERE id = ?').run(cleanKind(kind), id);
+    return { ok: true };
   }
 
   endSession(id) {
