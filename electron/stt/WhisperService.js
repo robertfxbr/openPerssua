@@ -231,6 +231,7 @@ class WhisperService {
       stdio: ['ignore', 'ignore', 'pipe'],
       windowsHide: true,
     });
+    if (proc.pid) lowerPriority(proc.pid);
     st.stderrTail = '';
     proc.stderr.on('data', (d) => { st.stderrTail = (st.stderrTail + d.toString()).slice(-2000); });
     st.proc = proc;
@@ -382,13 +383,25 @@ class WhisperService {
   }
 }
 
-// Threads do whisper-server. O padrão dele é 4. Num i5 de 6 núcleos, usar os
-// 6 baixou de 4,1 s para 3,5 s por fala (modelo small), sem mudar o texto.
+// Threads do whisper-server. Sempre sobram 2 núcleos para o app da reunião
+// (Teams, Meet, Zoom). Numa reunião simulada num i5 de 6 núcleos, usar os 6
+// atrasou 10% dos quadros e nem deixou a transcrição mais rápida, porque a
+// reunião também disputa a CPU.
 // Acima de 6 núcleos lógicos, conta metade: são processadores com
 // hyperthreading, e o Whisper não ganha com o núcleo lógico extra.
 function whisperThreads(logical = os.availableParallelism ? os.availableParallelism() : os.cpus().length) {
-  const n = logical <= 6 ? logical : Math.ceil(logical / 2);
-  return Math.min(8, Math.max(4, n));
+  const n = logical <= 6 ? logical - 2 : Math.floor(logical / 2);
+  return Math.min(8, Math.max(2, n));
+}
+
+// Prioridade "abaixo do normal": quando a reunião precisa da CPU, o Windows
+// atende a reunião primeiro e o Whisper espera. Com 4 threads nessa
+// prioridade, nenhum quadro da reunião simulada atrasou; a fala demorou uns
+// 15% a mais só nos momentos em que a CPU estava ocupada.
+function lowerPriority(pid) {
+  try {
+    os.setPriority(pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+  } catch { /* sem permissão: segue na prioridade normal */ }
 }
 
 // Resposta do detect_language -> 'pt' | 'en', ou null se for outro idioma.
