@@ -185,6 +185,7 @@ function App() {
   const [translate, setTranslate] = useState(DEFAULT_TRANSLATE);
   const [echoFilter, setEchoFilter] = useState(true);
   const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [sttFast, setSttFast] = useState(false); // transcrição rápida (troca um pouco de precisão)
   const [followup, setFollowup] = useState(null); // { text, streaming }
   const [updateInfo, setUpdateInfo] = useState(null); // release nova (ou "já atualizado")
   const [updateProgress, setUpdateProgress] = useState(null);
@@ -236,6 +237,7 @@ function App() {
   const translateErrorAtRef = useRef(0);
   const echoFilterRef = useRef(echoFilter);
   const noiseRef = useRef(noiseSuppression);
+  const sttFastRef = useRef(sttFast);
   const assistantRef = useRef('');       // instruções do assistente escolhido
   const summaryCtxRef = useRef(null);    // { dbId, transcript, memory } da última sessão encerrada
 
@@ -253,6 +255,7 @@ function App() {
   useEffect(() => { translateRef.current = translate; }, [translate]);
   useEffect(() => { echoFilterRef.current = echoFilter; }, [echoFilter]);
   useEffect(() => { noiseRef.current = noiseSuppression; }, [noiseSuppression]);
+  useEffect(() => { sttFastRef.current = sttFast; }, [sttFast]);
   useEffect(() => {
     assistantRef.current = findAssistant(assistantId, customAssistants).instructions || '';
   }, [assistantId, customAssistants]);
@@ -288,6 +291,7 @@ function App() {
     });
     loadFlag('audio.echoFilter', setEchoFilter);
     loadFlag('audio.noiseSuppression', setNoiseSuppression);
+    loadFlag('stt.fast', setSttFast);
     loadFlag('llm.compact', setCompactEnabled);
     api.settings.get('translate.config').then((t) => t && setTranslate({ ...DEFAULT_TRANSLATE, ...t }));
     api.settings.get('assistants.custom').then((list) => Array.isArray(list) && setCustomAssistants(list));
@@ -972,6 +976,7 @@ function App() {
         model: sttModelRef.current,
         language: sttLangRef.current,
         prompt: sttPromptRef.current,
+        fast: sttFastRef.current,
       });
       sessionRef.current = { dbId, micSttId, sysSttId: null };
       resetMemory(dbId);
@@ -987,6 +992,7 @@ function App() {
           model: sttModelRef.current,
           language: sttLangRef.current,
           prompt: sttPromptRef.current,
+          fast: sttFastRef.current,
         });
         sessionRef.current.sysSttId = sysSttId;
         await startSystemCapture(sysSttId);
@@ -1444,6 +1450,8 @@ function App() {
               onEchoFilter={(v) => changeFlag('audio.echoFilter', setEchoFilter, v)}
               noiseSuppression={noiseSuppression}
               onNoise={(v) => changeFlag('audio.noiseSuppression', setNoiseSuppression, v)}
+              sttFast={sttFast}
+              onSttFast={(v) => changeFlag('stt.fast', setSttFast, v)}
               listening={listening || starting}
               onError={setError}
             />

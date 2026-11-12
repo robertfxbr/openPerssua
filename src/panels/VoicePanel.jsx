@@ -11,7 +11,7 @@ function formatMB(bytes) {
 // e o tratamento do microfone (eco e ruído).
 export function VoicePanel({
   sttModel, onSelectModel, sttLang, onLang, sttPrompt, onPrompt,
-  echoFilter, onEchoFilter, noiseSuppression, onNoise, listening, onError,
+  echoFilter, onEchoFilter, noiseSuppression, onNoise, sttFast, onSttFast, listening, onError,
 }) {
   const [models, setModels] = useState([]);
   const [armed, setArmed] = useState(null); // modelo aguardando 2º clique para apagar
@@ -143,7 +143,20 @@ export function VoicePanel({
           <button className={`pill ${!noiseSuppression ? 'active' : ''}`} onClick={() => onNoise(false)}>desligado</button>
         </div>
       </div>
-      {listening && <div className="panel-note">Eco vale na hora; ruído vale a partir da próxima escuta.</div>}
+      <div className="theme-row">
+        <span className="theme-label">velocidade</span>
+        <div className="mode-pills slim">
+          <button className={`pill ${!sttFast ? 'active' : ''}`} onClick={() => onSttFast(false)} title="Mais preciso">precisa</button>
+          <button
+            className={`pill ${sttFast ? 'active' : ''}`}
+            onClick={() => onSttFast(true)}
+            title="Cada fala sai cerca de 30% mais rápido, com um pouco mais de erro"
+          >
+            rápida
+          </button>
+        </div>
+      </div>
+      {listening && <div className="panel-note">Eco vale na hora; ruído e velocidade valem a partir da próxima escuta.</div>}
     </>
   );
 }

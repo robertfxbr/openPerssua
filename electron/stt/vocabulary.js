@@ -15,7 +15,8 @@
 //  - Termos de reunião/entrevista/tecnologia: curadoria manual PT-BR + EN-US
 //
 // Limite prático: o prompt efetivo do Whisper é curto (~200 tokens); manter
-// as listas enxutas e priorizar o prompt do usuário (vem primeiro).
+// as listas enxutas e priorizar o prompt do usuário (vem por último, ver
+// composePrompt).
 
 // Nomes próprios mais frequentes no Brasil (IBGE) — maior ganho real de
 // precisão em conversas, onde nomes próprios são o erro mais comum.
@@ -72,18 +73,23 @@ const VOCAB_PT = `${NOMES_BR}. ${REUNIAO_PT}. ${TECH_PT}. Teka`;
 const VOCAB_AUTO = `${NOMES_BR}. ${REUNIAO_PT}. ${TECH_PT}. ${VOCAB_EN}`;
 
 /**
- * Compõe o prompt de viés final: o prompt do usuário tem prioridade (vem
- * primeiro), seguido do vocabulário embutido do idioma ativo.
+ * Compõe o prompt de viés final: o vocabulário embutido do idioma ativo e,
+ * por ÚLTIMO, o do usuário.
+ *
+ * A ordem importa: o whisper.cpp guarda só os ~224 tokens finais do prompt e
+ * descarta o começo. Com o usuário na frente (como era), as palavras dele
+ * eram as primeiras a sumir. No banco de testes, mover para o fim fez
+ * "useEffect" e "contínua" saírem certos (erro 28,9% -> 28,1%).
  * @param {string} userPrompt vocabulário livre do usuário (settings stt.prompt)
  * @param {string} language 'pt' | 'en' | 'auto'
  */
 function composePrompt(userPrompt, language = 'auto') {
   const parts = [];
-  const custom = String(userPrompt || '').trim();
-  if (custom) parts.push(custom);
   if (language === 'en') parts.push(VOCAB_EN);
   else if (language === 'pt') parts.push(VOCAB_PT);
   else parts.push(VOCAB_AUTO);
+  const custom = String(userPrompt || '').trim();
+  if (custom) parts.push(custom);
   return parts.join(' ');
 }
 

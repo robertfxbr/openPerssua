@@ -2,6 +2,7 @@
 // buffer limitado — espelha LocalWhisperService/WhisperSession do original,
 // mas enxuto: 1 sessão por fonte (mic | system), deltas via IPC.
 
+const { cleanTranscript, isSilent } = require('./cleanTranscript');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -197,6 +198,9 @@ class WhisperService {
       '--host', '127.0.0.1',
       '--port', String(SERVER_PORT),
       '--convert',
+      // Não gera tokens de "não fala" ([Música], (risos)): menos lixo no
+      // silêncio e mesma precisão no banco de testes
+      '--suppress-nst',
     ]);
     this.loadedModel = modelPath;
     this.serverProcess.on('exit', () => { this.serverProcess = null; this.serverReady = null; });
@@ -220,12 +224,14 @@ class WhisperService {
     return this.serverReady;
   }
 
-  async startSession({ sessionId, source = 'mic', model = 'ggml-base.bin', language = 'auto', prompt, onProgress }) {
+  async startSession({ sessionId, source = 'mic', model = 'ggml-base.bin', language = 'auto', prompt, fast = false, onProgress }) {
     const { path: modelPath } = await this.downloadModel(model, onProgress);
     const port = await this.ensureServer(modelPath);
     // Viés de vocabulário: o prompt do usuário tem prioridade; o vocabulário
     // embutido (nomes IBGE + reunião/tecnologia PT-BR/EN) vem em seguida.
-    this.sessions.set(sessionId, { source, language, prompt: composePrompt(prompt, language), port, pcmChunks: [], bytes: 0, active: true });
+    this.sessions.set(sessionId, {
+      source, language, prompt: composePrompt(prompt, language), fast: Boolean(fast), port, pcmChunks: [], bytes: 0, active: true,
+    });
     return { sessionId, port };
   }
 
@@ -253,6 +259,7 @@ class WhisperService {
     session.pcmChunks = [];
     session.bytes = 0;
     if (pcm.length < 16000 * 2 * 0.5) return null; // < 0,5s de áudio: ignora
+    if (isSilent(pcm)) return null; // trecho mudo: o Whisper só inventaria texto
 
     const wav = pcmToWav(pcm, 16000);
     const form = new FormData();
@@ -262,15 +269,22 @@ class WhisperService {
     // Viés de vocabulário: o Whisper usa o prompt como contexto inicial,
     // o que corrige nomes próprios e jargões (ex.: "Robert" → não "bitch")
     if (session.prompt) form.append('prompt', session.prompt);
+    // Transcrição rápida: o Whisper completa todo trecho até 30 s antes de
+    // processar. Aqui ele processa só o tamanho da fala, com piso de 15 s e
+    // folga de 10 s. No banco de testes (modelo small): 4,1 s -> 2,8 s por
+    // fala, com erro de palavras 27,4% -> 28,9%. Menos que isso perdia frases.
+    if (session.fast) form.append('audio_ctx', String(fastAudioCtx(pcm.length)));
 
     const res = await fetch(`http://127.0.0.1:${session.port}/inference`, { method: 'POST', body: form });
     if (!res.ok) throw new Error(`whisper inference: HTTP ${res.status}`);
     const data = await res.json();
+    const text = cleanTranscript(data.text);
+    if (!text) return null; // silêncio, ruído ou alucinação conhecida
 
     this.sendToRenderer('stt:transcription-delta', {
-      sessionId, source: session.source, text: data.text, ts: Date.now(),
+      sessionId, source: session.source, text, ts: Date.now(),
     });
-    return data.text;
+    return text;
   }
 
   async stopSession(sessionId) {
@@ -294,6 +308,13 @@ class WhisperService {
   }
 }
 
+// audio_ctx do Whisper: 50 quadros por segundo, máximo 1500 (30 s).
+// pcmBytes é PCM s16le mono 16 kHz (32000 bytes por segundo).
+function fastAudioCtx(pcmBytes) {
+  const secs = pcmBytes / 32000;
+  return Math.min(1500, Math.max(768, Math.ceil(secs * 50) + 512));
+}
+
 // WAV header mínimo para PCM s16le mono
 function pcmToWav(pcm, sampleRate) {
   const header = Buffer.alloc(44);
@@ -313,4 +334,4 @@ function pcmToWav(pcm, sampleRate) {
   return Buffer.concat([header, pcm]);
 }
 
-module.exports = { WhisperService, MODEL_CATALOG };
+module.exports = { WhisperService, MODEL_CATALOG, fastAudioCtx };
