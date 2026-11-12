@@ -103,6 +103,7 @@ export function VoicePanel({
         <div className="mode-pills slim">
           <button className={`pill ${sttLang === 'pt' ? 'active' : ''}`} onClick={() => onLang('pt')} title="Transcrição em português (Brasil)">PT-BR</button>
           <button className={`pill ${sttLang === 'en' ? 'active' : ''}`} onClick={() => onLang('en')} title="Transcription in English (US)">EN-US</button>
+          <button className={`pill ${sttLang === 'pten' ? 'active' : ''}`} onClick={() => onLang('pten')} title="Detecta português ou inglês em cada fala. Bom para entrevista em inglês ou conversa misturada. Baixa o modelo Tiny (75 MB) só para detectar o idioma; cada fala leva uns 0,4 s a mais">PT+EN</button>
         </div>
       </div>
       <div className="theme-row">
@@ -150,7 +151,7 @@ export function VoicePanel({
           <button
             className={`pill ${sttFast ? 'active' : ''}`}
             onClick={() => onSttFast(true)}
-            title="Cada fala sai cerca de 30% mais rápido, com um pouco mais de erro"
+            title="Falas de até 10 s saem cerca de 30% mais rápido, com um pouco mais de erro em áudio difícil. Falas mais longas usam o modo preciso"
           >
             rápida
           </button>

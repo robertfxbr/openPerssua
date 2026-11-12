@@ -6,11 +6,17 @@ const { cleanTranscript, isSilent } = require('./cleanTranscript');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { composePrompt } = require('./vocabulary');
 
 const MAX_BUFFER_BYTES = 16 * 1024 * 1024; // equivalente ao CappedAudioBuffer
 const SERVER_PORT = 8178;
 const MODEL_LOAD_TIMEOUT_MS = 120000; // modelos grandes demoram
+const DETECT_PORT = 8179; // servidor do detector de idioma (modo PT+EN)
+const DETECT_MODEL = 'ggml-tiny.bin';
+// pt e en: idioma fixo. pten: detecta português ou inglês a cada fala.
+// auto: qualquer idioma (o Whisper decide; não aparece na tela).
+const LANGUAGES = new Set(['pt', 'en', 'pten', 'auto']);
 
 // Modelos ggml oficiais do whisper.cpp que o app sabe baixar. Só nomes desta
 // lista são aceitos: o nome vira caminho de arquivo, e um nome livre poderia
@@ -35,9 +41,12 @@ class WhisperService {
     this.userDataDir = userDataDir;
     this.sendToRenderer = sendToRenderer;
     this.sessions = new Map(); // sessionId -> { buffers, active }
-    this.serverProcess = null;
-    this.serverReady = null; // Promise compartilhada de readiness
-    this.loadedModel = null; // ggml carregado no servidor atual
+    // whisper-servers: main transcreve, detector só detecta o idioma (PT+EN).
+    // ready é a Promise compartilhada de readiness; model, o ggml carregado.
+    this.servers = {
+      main: { proc: null, ready: null, model: null, stderrTail: '' },
+      detector: { proc: null, ready: null, model: null, stderrTail: '' },
+    };
     this.downloads = new Map();   // nome -> promise do download em andamento
     this.progress = new Map();    // nome -> { received, total }
     this.controllers = new Map(); // nome -> AbortController (cancelar)
@@ -98,7 +107,7 @@ class WhisperService {
         bytes,
         downloading: this.downloads.has(m.name),
         progress: this.progress.get(m.name) || null,
-        loaded: this.loadedModel === p,
+        loaded: this.servers.main.model === p,
       };
     });
   }
@@ -109,10 +118,10 @@ class WhisperService {
   deleteModel(name) {
     const p = this.modelPath(name);
     if (this.downloads.has(name)) return { ok: false, error: 'cancele o download antes de apagar' };
-    if (this.loadedModel === p) {
+    const inUse = Object.keys(this.servers).filter((slot) => this.servers[slot].model === p);
+    if (inUse.length) {
       if (this.sessions.size > 0) return { ok: false, error: 'pare a escuta antes de apagar o modelo em uso' };
-      this.dispose();
-      this.loadedModel = null;
+      for (const slot of inUse) this._stop(slot);
     }
     fs.rmSync(p, { force: true });
     fs.rmSync(`${p}.part`, { force: true });
@@ -179,60 +188,118 @@ class WhisperService {
 
   // Sobe whisper-server; em produção o binário fica em resources/whisper-bin
   async ensureServer(modelPath) {
-    // Troca de modelo (ex.: base → small) exige reiniciar o servidor — ele
-    // carrega o ggml uma única vez no boot do processo.
-    if (this.serverReady && this.loadedModel && this.loadedModel !== modelPath) {
-      if (this.serverProcess) this.serverProcess.kill();
-      this.serverProcess = null;
-      this.serverReady = null;
-    }
-    if (this.serverReady) return this.serverReady;
+    return this._ensure('main', modelPath, SERVER_PORT);
+  }
+
+  // Segundo whisper-server, só com o modelo Tiny, que apenas detecta o idioma
+  // de cada fala no modo PT+EN. No banco de testes o Tiny acertou PT x EN em
+  // 225 de 225 trechos (limpo, com ruído e com som de chamada) em 0,7 s; o
+  // Small levaria 3,4 s para a mesma detecção.
+  async ensureDetector(onProgress) {
+    const { path: modelPath } = await this.downloadModel(DETECT_MODEL, onProgress);
+    // Se a transcrição já usa o Tiny, o mesmo servidor detecta
+    if (this.servers.main.model === modelPath && this.servers.main.ready) return this.servers.main.ready;
+    return this._ensure('detector', modelPath, DETECT_PORT);
+  }
+
+  // Um whisper-server por "vaga" (main = transcrição, detector = idioma).
+  // Trocar o modelo de uma vaga reinicia o processo dela: o servidor carrega
+  // o ggml uma única vez no boot.
+  _ensure(slot, modelPath, port) {
+    const st = this.servers[slot];
+    if (st.ready && st.model !== modelPath) this._stop(slot);
+    if (st.ready) return st.ready;
 
     const { binary, candidates } = this.findBinary();
     if (!binary) {
       throw new Error(`whisper-server não encontrado em nenhum destes caminhos: ${candidates.join(' | ')}`);
     }
 
-    this.serverProcess = spawn(binary, [
+    const proc = spawn(binary, [
       '--model', modelPath,
       '--host', '127.0.0.1',
-      '--port', String(SERVER_PORT),
+      '--port', String(port),
       '--convert',
       // Não gera tokens de "não fala" ([Música], (risos)): menos lixo no
       // silêncio e mesma precisão no banco de testes
       '--suppress-nst',
-    ]);
-    this.loadedModel = modelPath;
-    this.serverProcess.on('exit', () => { this.serverProcess = null; this.serverReady = null; });
+      '--threads', String(whisperThreads()),
+    ], {
+      // A saída precisa ser lida ou descartada: o whisper-server escreve
+      // várias linhas por pedido e, com o pipe cheio, trava no meio de uma
+      // transcrição. O stdout vai fora; do stderr fica só o fim, para erro.
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
+    st.stderrTail = '';
+    proc.stderr.on('data', (d) => { st.stderrTail = (st.stderrTail + d.toString()).slice(-2000); });
+    st.proc = proc;
+    st.model = modelPath;
+    // Só limpa a vaga se ainda for este processo: ao trocar de modelo, o
+    // processo antigo morre depois que o novo já ocupou a vaga.
+    proc.on('exit', () => {
+      if (st.proc === proc) { st.proc = null; st.ready = null; }
+    });
 
     // Poll de readiness em vez de sleep fixo: modelos ggml-medium/large
     // levam muito mais que 1,5s para carregar.
-    this.serverReady = (async () => {
+    const ready = (async () => {
       const deadline = Date.now() + MODEL_LOAD_TIMEOUT_MS;
       while (Date.now() < deadline) {
-        if (!this.serverProcess) throw new Error('whisper-server encerrou durante o carregamento');
+        if (st.proc !== proc) throw new Error(`whisper-server encerrou durante o carregamento: ${st.stderrTail.trim().split(/\r?\n/).slice(-3).join(' | ')}`);
         try {
-          const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/`, { signal: AbortSignal.timeout(1000) });
-          if (res.ok || res.status === 404) return SERVER_PORT;
+          const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
+          if (res.ok || res.status === 404) return port;
         } catch { /* ainda subindo */ }
         await new Promise((r) => setTimeout(r, 500));
       }
       throw new Error('timeout aguardando whisper-server carregar o modelo');
     })();
-
-    this.serverReady.catch(() => { this.serverReady = null; });
-    return this.serverReady;
+    st.ready = ready;
+    ready.catch(() => { if (st.ready === ready) st.ready = null; });
+    return ready;
   }
 
-  async startSession({ sessionId, source = 'mic', model = 'ggml-base.bin', language = 'auto', prompt, fast = false, onProgress }) {
+  _stop(slot) {
+    const st = this.servers[slot];
+    if (st.proc) st.proc.kill();
+    st.proc = null;
+    st.ready = null;
+    st.model = null;
+  }
+
+  async startSession({ sessionId, source = 'mic', model = 'ggml-base.bin', language = 'pt', prompt, fast = false, onProgress }) {
+    if (!LANGUAGES.has(language)) language = 'pt';
     const { path: modelPath } = await this.downloadModel(model, onProgress);
     const port = await this.ensureServer(modelPath);
-    // Viés de vocabulário: o prompt do usuário tem prioridade; o vocabulário
-    // embutido (nomes IBGE + reunião/tecnologia PT-BR/EN) vem em seguida.
+    // PT+EN: o detector sobe junto, para a primeira fala não esperar por ele
+    const detectPort = language === 'pten' ? await this.ensureDetector(onProgress) : null;
+    // Viés de vocabulário: o embutido do idioma e, por último, o do usuário.
+    // No PT+EN o prompt é montado em cada fala, depois de saber o idioma.
     this.sessions.set(sessionId, {
-      source, language, prompt: composePrompt(prompt, language), fast: Boolean(fast), port, pcmChunks: [], bytes: 0, active: true,
+      source, language, userPrompt: prompt, prompt: composePrompt(prompt, language),
+      fast: Boolean(fast), port, detectPort, lastLang: null, pcmChunks: [], bytes: 0, active: true,
     });
     return { sessionId, port };
+  }
+
+  // Idioma de um trecho, só entre português e inglês. Devolve 'pt' | 'en',
+  // ou null se o detector falhar ou achar outro idioma. Com response_format
+  // json a resposta traz só o idioma mais provável; o verbose_json traria as
+  // probabilidades, mas o servidor refaz a detecção para isso (dobra o tempo).
+  async detectLanguage(session, wav) {
+    try {
+      const form = new FormData();
+      form.append('file', new Blob([wav], { type: 'audio/wav' }), 'audio.wav');
+      form.append('response_format', 'json');
+      form.append('language', 'auto');
+      form.append('detect_language', 'true');
+      const res = await fetch(`http://127.0.0.1:${session.detectPort}/inference`, { method: 'POST', body: form, signal: AbortSignal.timeout(15000) });
+      if (!res.ok) return null;
+      return pickPtEn(await res.json());
+    } catch {
+      return null;
+    }
   }
 
   // chunk: ArrayBuffer PCM 16kHz mono vindo do renderer (mic ou loopback)
@@ -265,15 +332,25 @@ class WhisperService {
     const form = new FormData();
     form.append('file', new Blob([wav], { type: 'audio/wav' }), 'audio.wav');
     form.append('response_format', 'json');
-    if (session.language !== 'auto') form.append('language', session.language);
+    // O idioma vai sempre: sem o campo, o whisper-server usa o padrão dele,
+    // que é inglês (e não automático), e fala em português virava tradução.
+    let language = session.language;
+    let prompt = session.prompt;
+    if (language === 'pten') {
+      // Se o detector falhar ou apontar outro idioma, vale o da fala anterior
+      const lang = await this.detectLanguage(session, wav);
+      if (lang) session.lastLang = lang;
+      language = lang || session.lastLang || 'auto';
+      prompt = composePrompt(session.userPrompt, language);
+    }
+    form.append('language', language);
     // Viés de vocabulário: o Whisper usa o prompt como contexto inicial,
     // o que corrige nomes próprios e jargões (ex.: "Robert" → não "bitch")
-    if (session.prompt) form.append('prompt', session.prompt);
+    if (prompt) form.append('prompt', prompt);
     // Transcrição rápida: o Whisper completa todo trecho até 30 s antes de
-    // processar. Aqui ele processa só o tamanho da fala, com piso de 15 s e
-    // folga de 10 s. No banco de testes (modelo small): 4,1 s -> 2,8 s por
-    // fala, com erro de palavras 27,4% -> 28,9%. Menos que isso perdia frases.
-    if (session.fast) form.append('audio_ctx', String(fastAudioCtx(pcm.length)));
+    // processar. Aqui ele processa uma janela menor quando a fala cabe nela.
+    const audioCtx = session.fast ? fastAudioCtx(pcm.length) : null;
+    if (audioCtx) form.append('audio_ctx', String(audioCtx));
 
     const res = await fetch(`http://127.0.0.1:${session.port}/inference`, { method: 'POST', body: form });
     if (!res.ok) throw new Error(`whisper inference: HTTP ${res.status}`);
@@ -283,6 +360,7 @@ class WhisperService {
 
     this.sendToRenderer('stt:transcription-delta', {
       sessionId, source: session.source, text, ts: Date.now(),
+      lang: language === 'auto' ? null : language,
     });
     return text;
   }
@@ -296,23 +374,50 @@ class WhisperService {
     return { sessionId, finalText: text };
   }
 
-  // Mata o whisper-server — chamado no before-quit para não deixar processo órfão
+  // Mata os whisper-servers — chamado no before-quit para não deixar processo órfão
   dispose() {
     for (const s of this.sessions.values()) s.active = false;
     this.sessions.clear();
-    if (this.serverProcess) {
-      this.serverProcess.kill();
-      this.serverProcess = null;
-      this.serverReady = null;
-    }
+    for (const slot of Object.keys(this.servers)) this._stop(slot);
   }
 }
 
-// audio_ctx do Whisper: 50 quadros por segundo, máximo 1500 (30 s).
-// pcmBytes é PCM s16le mono 16 kHz (32000 bytes por segundo).
+// Threads do whisper-server. O padrão dele é 4. Num i5 de 6 núcleos, usar os
+// 6 baixou de 4,1 s para 3,5 s por fala (modelo small), sem mudar o texto.
+// Acima de 6 núcleos lógicos, conta metade: são processadores com
+// hyperthreading, e o Whisper não ganha com o núcleo lógico extra.
+function whisperThreads(logical = os.availableParallelism ? os.availableParallelism() : os.cpus().length) {
+  const n = logical <= 6 ? logical : Math.ceil(logical / 2);
+  return Math.min(8, Math.max(4, n));
+}
+
+// Resposta do detect_language -> 'pt' | 'en', ou null se for outro idioma.
+// Com probabilidades (verbose_json), escolhe o mais provável dos dois.
+function pickPtEn(data) {
+  const p = data?.language_probabilities;
+  if (p && (p.pt || p.en)) return (p.pt || 0) >= (p.en || 0) ? 'pt' : 'en';
+  const top = data?.detected_language || data?.language;
+  if (top === 'pt' || top === 'portuguese') return 'pt';
+  if (top === 'en' || top === 'english') return 'en';
+  return null;
+}
+
+// audio_ctx do modo rápido, ou null para a janela inteira (30 s).
+// O Whisper usa 50 quadros por segundo; pcmBytes é PCM s16le mono 16 kHz
+// (32000 bytes por segundo).
+//
+// A janela é FIXA em 1024 quadros (20 s) para falas de até 10 s, com 10 s de
+// folga, e inteira acima disso. Uma janela que mudava a cada fala (tamanho da
+// fala + folga) corrompia o whisper-server: com flash attention e o
+// vocabulário no prompt, a partir do 15º pedido todas as falas voltavam
+// vazias, até reiniciar o servidor. Com 1024 fixo (alternando com a janela
+// inteira) foram 140 pedidos sem falha, no small e no base. No banco de
+// testes (small, 6 threads): 3,5 s -> 2,5 s por fala; erro de palavras igual
+// (9,1%) nas vozes PT/EN e 28,9% -> 30,4% na voz mais difícil.
+const FAST_AUDIO_CTX = 1024;
 function fastAudioCtx(pcmBytes) {
   const secs = pcmBytes / 32000;
-  return Math.min(1500, Math.max(768, Math.ceil(secs * 50) + 512));
+  return secs * 50 + 512 <= FAST_AUDIO_CTX ? FAST_AUDIO_CTX : null;
 }
 
 // WAV header mínimo para PCM s16le mono
@@ -334,4 +439,4 @@ function pcmToWav(pcm, sampleRate) {
   return Buffer.concat([header, pcm]);
 }
 
-module.exports = { WhisperService, MODEL_CATALOG, fastAudioCtx };
+module.exports = { WhisperService, MODEL_CATALOG, fastAudioCtx, whisperThreads, pickPtEn };

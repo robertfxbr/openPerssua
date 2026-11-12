@@ -87,7 +87,11 @@ lógicas (274 canais IPC mapeados, 245 módulos analisados).
   salvo na sessão em SQLite
 - **VAD por fim de fala** (energy-based, AudioWorklet em thread dedicada):
   o flush acontece no fim do enunciado, não num relógio fixo — frases não são
-  mais cortadas e o Whisper não "alucina" em silêncio. Idioma fixo PT-BR/EN-US
+  mais cortadas e o Whisper não "alucina" em silêncio
+- **Idioma**: PT-BR, EN-US ou **PT+EN**, que detecta português ou inglês em
+  cada fala com o modelo Tiny (75 MB, baixado na primeira vez) e transcreve
+  com o modelo escolhido e o vocabulário daquele idioma. Serve para
+  entrevista em inglês e conversa que mistura os dois
 - **Vocabulário embutido de viés (prompt-biasing)**: nomes brasileiros mais
   frequentes (IBGE), termos de reunião/entrevista e tecnologia PT-BR/EN são
   injetados como `initial_prompt` do Whisper em toda sessão, corrigindo nomes

@@ -158,7 +158,7 @@ function App() {
   const [onboarding, setOnboarding] = useState(null); // null | 0|1|2 (passo)
   const [sttModel, setSttModel] = useState('ggml-base.bin');
   const [llmModel, setLlmModel] = useState(''); // '' = padrão do provedor
-  const [sttLang, setSttLang] = useState('pt'); // idioma do Whisper: pt | en
+  const [sttLang, setSttLang] = useState('pten'); // idioma do Whisper: pt | en | pten (detecta PT ou EN a cada fala)
   const [sttPrompt, setSttPrompt] = useState(''); // viés de vocabulário (nomes, jargões)
 
   // ---- histórico de sessões ----
