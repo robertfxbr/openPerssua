@@ -25,9 +25,7 @@ const { openLogsFolder } = require('./system/logs');
 const updater = require('./system/updater');
 const { confirmBoot } = require('./system/appBundle');
 const { updateShortcutIcons } = require('./system/shortcutIcon');
-
-const UPDATE_FIRST_CHECK_MS = 20000;          // espera o app assentar
-const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // e repete a cada 6 h
+const { startAutoUpdate } = require('./system/autoUpdate');
 
 const isDev = process.argv.includes('--dev');
 
@@ -88,14 +86,12 @@ function moveOverlayToNextDisplay() {
   return r;
 }
 
-// Verificação de atualização. manual=true vem da bandeja: mostra o overlay e
-// avisa até quando já está na última versão. A automática fica quieta, não
-// abre a janela e respeita "ignorar esta versão".
-async function checkUpdates(settingsStore, manual) {
+// "Verificar atualizações" da bandeja: mostra o overlay e avisa até quando
+// já está na última versão. A verificação de hora em hora fica em
+// system/autoUpdate.js.
+async function checkUpdates(manual) {
   try {
-    if (!manual && (await settingsStore.get('update.autoCheck')) === false) return;
     const r = await updater.checkForUpdate();
-    if (!manual && (!r.available || r.version === (await settingsStore.get('update.skipVersion')))) return;
     const win = getOverlayWindow();
     if (!win || win.webContents.isDestroyed()) return;
     if (manual && !win.isVisible()) win.showInactive();
@@ -142,7 +138,7 @@ function trayMenu(settingsStore) {
     { label: 'Modo fantasma (some do compartilhamento de tela)', type: 'checkbox', checked: g.hidden, click: () => changeGhost(settingsStore, { hidden: !g.hidden }) },
     { label: 'Cliques atravessam a janela', type: 'checkbox', checked: g.clickThrough, click: () => changeGhost(settingsStore, { clickThrough: !g.clickThrough }) },
     { type: 'separator' },
-    { label: 'Verificar atualizações', click: () => checkUpdates(settingsStore, true) },
+    { label: 'Verificar atualizações', click: () => checkUpdates(true) },
     { label: 'Abrir pasta de logs', click: () => openLogsFolder() },
     { type: 'separator' },
     { label: 'Sair', click: () => app.quit() },
@@ -202,6 +198,16 @@ async function bootstrap() {
     return changeGhost(settingsStore, clean);
   });
 
+  // antes da janela: a tela avisa da escuta logo ao abrir
+  startAutoUpdate({
+    settingsStore,
+    getOverlayWindow,
+    run: !isDev, // em dev só registra os canais, não procura versão
+    send: (channel, payload) => {
+      const win = getOverlayWindow();
+      if (win && !win.webContents.isDestroyed()) win.webContents.send(channel, payload);
+    },
+  });
   createOverlayWindow({ isDev });
   // Atualização leve: a janela abriu, então o pacote está bom (ver bootstrap.js)
   if (global.tekaBundle) {
@@ -213,10 +219,6 @@ async function bootstrap() {
   // depois que a janela abriu: mexer em atalhos não atrasa a abertura
   setTimeout(() => updateShortcutIcons(), 3000);
 
-  if (!isDev) {
-    setTimeout(() => checkUpdates(settingsStore, false), UPDATE_FIRST_CHECK_MS);
-    setInterval(() => checkUpdates(settingsStore, false), UPDATE_INTERVAL_MS);
-  }
 
   app.on('before-quit', () => {
     disposeIpc(); // encerra whisper-server e streams ativas

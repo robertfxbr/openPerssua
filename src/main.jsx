@@ -228,6 +228,7 @@ function App() {
   const [updateInfo, setUpdateInfo] = useState(null); // release nova (ou "já atualizado")
   const [updateProgress, setUpdateProgress] = useState(null);
   const [updateFile, setUpdateFile] = useState(null);  // instalador baixado e conferido
+  const [updateAuto, setUpdateAuto] = useState(false); // vai reiniciar sozinho quando der
 
   const sessionRef = useRef(null);   // { dbId, micSttId, sysSttId }
   const audioRef = useRef(null);     // { mic|sys: { stream, audioCtx, processor, analyser, flusher } }
@@ -372,6 +373,12 @@ function App() {
     });
     const unsubUpdate = api.update.onAvailable(handleUpdateResult);
     const unsubUpdateProg = api.update.onProgress(setUpdateProgress);
+    // baixada em segundo plano: só falta reiniciar
+    const unsubUpdateReady = api.update.onReady((r) => {
+      setUpdateInfo(r);
+      setUpdateFile('light');
+      setUpdateAuto(Boolean(r.autoInstall));
+    });
 
     // Atalhos globais: ✦ sugerir agora / copiar sugestão (sem focar a janela)
     const unsubTrig = api.overlay.onAssistTrigger(() => {
@@ -407,6 +414,7 @@ function App() {
       unsubClip();
       unsubProg();
       unsubUpdate();
+      unsubUpdateReady();
       unsubUpdateProg();
       flushPendingWrites();
       stopAllCaptures();
@@ -646,6 +654,30 @@ function App() {
     if (!bytes) return '';
     return bytes < 1024 * 1024 ? ` (${Math.max(1, Math.round(bytes / 1024))} KB)` : ` (${(bytes / 1024 / 1024).toFixed(1)} MB)`;
   }
+
+  // O processo principal só reinicia sozinho com a escuta parada e a pessoa
+  // sem mexer no Teka há alguns minutos: avisa quando a escuta muda e, no
+  // máximo a cada 30 s, quando a pessoa clica ou digita na janela.
+  const activityRef = useRef({ listening: false, working: false });
+  useEffect(() => {
+    activityRef.current = { listening: listening || starting, working: busy };
+    api.update.reportActivity?.(activityRef.current)?.catch(() => {});
+  }, [listening, starting, busy]);
+  useEffect(() => {
+    let last = 0;
+    const touch = () => {
+      const now = Date.now();
+      if (now - last < 30000) return;
+      last = now;
+      api.update.reportActivity?.(activityRef.current)?.catch(() => {});
+    };
+    window.addEventListener('pointerdown', touch);
+    window.addEventListener('keydown', touch);
+    return () => {
+      window.removeEventListener('pointerdown', touch);
+      window.removeEventListener('keydown', touch);
+    };
+  }, []);
 
   function skipUpdate() {
     if (updateInfo?.version) api.settings.set('update.skipVersion', updateInfo.version);
@@ -1923,7 +1955,13 @@ function App() {
             </>
           ) : (
             <>
-              <span>✦ versão {updateInfo.version} disponível (você tem {updateInfo.current})</span>
+              <span>
+                {updateFile === 'light'
+                  ? (updateAuto
+                    ? `✦ versão ${updateInfo.version} baixada: o Teka reinicia sozinho quando você não estiver ouvindo`
+                    : `✦ versão ${updateInfo.version} pronta (você tem ${updateInfo.current})`)
+                  : `✦ versão ${updateInfo.version} disponível (você tem ${updateInfo.current})`}
+              </span>
               <div className="update-actions">
                 {updateFile ? (
                   <button
@@ -1952,7 +1990,12 @@ function App() {
                   </button>
                 ) : null}
                 <button className="mini-link" onClick={() => api.update.openPage(updateInfo.pageUrl)}>ver novidades ↗</button>
-                <button className="mini-link" title="Não avisar mais desta versão" onClick={skipUpdate}>ignorar</button>
+                {updateFile !== 'light' && (
+                  <button className="mini-link" title="Não avisar mais desta versão" onClick={skipUpdate}>ignorar</button>
+                )}
+                {updateFile === 'light' && (
+                  <button className="mini-link" title="Esconder o aviso; a versão nova entra no próximo reinício" onClick={() => setUpdateInfo(null)}>✕</button>
+                )}
               </div>
             </>
           )}

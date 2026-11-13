@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const { reasoningOptions } = require('../llm/reasoning');
 const { LLMRouter, TASKS } = require('../llm/LLMRouter');
 const { WhisperService } = require('../stt/WhisperService');
+const gpuRuntime = require('../stt/GpuRuntime');
 const { isSecret, MASK } = require('../settings/SettingsStore');
 const { TokenStore } = require('../llm/providers/ChatGPTOAuthAdapter');
 const {
@@ -151,6 +152,49 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
     let modelInstalled = false;
     try { modelInstalled = whisper.isInstalled(name); } catch { /* nome fora do catálogo */ }
     return { binary: Boolean(binary), modelInstalled };
+  });
+
+  // ---- placa de vídeo (Whisper em CUDA ou Vulkan) ----
+  // A placa é detectada uma vez; a escolha fica em settings "stt.gpu".
+  const gpuDetected = gpuRuntime.detectGpu(app).catch(() => null);
+  const gpuKinds = (gpu) => (gpu?.pack === 'cuda' ? ['cuda', 'vulkan'] : gpu ? ['vulkan'] : []);
+  let gpuInstall = null; // { kind, controller, progress }
+  Promise.all([gpuDetected, settingsStore.get('stt.gpu')]).then(([gpu, enabled]) => {
+    whisper.setGpu({ enabled: Boolean(enabled) && Boolean(gpu), kinds: gpuKinds(gpu) });
+  }).catch(() => {});
+
+  ipcMain.handle('stt:gpu-status', async () => {
+    const gpu = await gpuDetected;
+    const packs = Object.fromEntries(Object.entries(gpuRuntime.PACKS).map(([k, p]) => [k, { label: p.label, size: p.size }]));
+    return {
+      gpu, packs, ...whisper.gpuStatus(),
+      installing: gpuInstall ? { kind: gpuInstall.kind, progress: gpuInstall.progress } : null,
+    };
+  });
+  ipcMain.handle('stt:gpu-install', async () => {
+    const gpu = await gpuDetected;
+    if (!gpu) return { ok: false, error: 'nenhuma placa de vídeo compatível encontrada' };
+    if (gpuInstall) return { ok: false, error: 'download já em andamento' };
+    const controller = new AbortController();
+    gpuInstall = { kind: gpu.pack, controller, progress: null };
+    try {
+      await gpuRuntime.installPack(userDataDir, gpu.pack, {
+        signal: controller.signal,
+        onProgress: (p) => { if (gpuInstall) gpuInstall.progress = p; sendToOverlay('stt:gpu-progress', p); },
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String(err.message || err) };
+    } finally {
+      gpuInstall = null;
+    }
+  });
+  ipcMain.handle('stt:gpu-cancel', () => { gpuInstall?.controller.abort(); return { ok: true }; });
+  ipcMain.handle('stt:gpu-set', async (_e, enabled) => {
+    const gpu = await gpuDetected;
+    await settingsStore.set('stt.gpu', Boolean(enabled));
+    whisper.setGpu({ enabled: Boolean(enabled) && Boolean(gpu), kinds: gpuKinds(gpu) });
+    return { ok: true };
   });
 
   // ---- STT ----

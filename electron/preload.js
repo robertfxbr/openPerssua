@@ -77,6 +77,11 @@ contextBridge.exposeInMainWorld('teka', {
     cancelDownload: (name) => invoke('stt:cancel-download', name),
     deleteModel: (name) => invoke('stt:delete-model', name),
     check: (name) => invoke('stt:check', name),
+    gpuStatus: () => invoke('stt:gpu-status'),
+    gpuInstall: () => invoke('stt:gpu-install'),
+    gpuCancel: () => invoke('stt:gpu-cancel'),
+    gpuSet: (enabled) => invoke('stt:gpu-set', enabled),
+    onGpuProgress: (cb) => on('stt:gpu-progress', cb),
   },
   update: {
     check: () => invoke('update:check'),
@@ -86,6 +91,10 @@ contextBridge.exposeInMainWorld('teka', {
     version: () => invoke('update:version'),
     onAvailable: (cb) => on('update:available', cb),
     onProgress: (cb) => on('update:progress', cb),
+    onReady: (cb) => on('update:ready', cb),
+    reportActivity: (state) => invoke('update:activity', state),
+    getMode: () => invoke('update:get-mode'),
+    setMode: (mode) => invoke('update:set-mode', mode),
   },
   llm: {
     listProviders: () => invoke('llm:list-providers'),

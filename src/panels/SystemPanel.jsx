@@ -10,19 +10,19 @@ export function SystemPanel({
 }) {
   const [displays, setDisplays] = useState([]);
   const [logStatus, setLogStatus] = useState('');
-  const [autoUpdate, setAutoUpdate] = useState(true);
+  const [updateMode, setUpdateMode] = useState('auto'); // 'auto' | 'manual'
   const [updateStatus, setUpdateStatus] = useState('');
   const [showDiag, setShowDiag] = useState(false);
   const [version, setVersion] = useState(null);
 
   useEffect(() => {
-    api.settings.get('update.autoCheck').then((v) => setAutoUpdate(v !== false));
+    api.update.getMode?.().then((m) => m && setUpdateMode(m)).catch(() => {});
     api.update.version().then(setVersion).catch(() => setVersion(null));
   }, []);
 
-  function changeAutoUpdate(value) {
-    setAutoUpdate(value);
-    api.settings.set('update.autoCheck', value);
+  function changeUpdateMode(mode) {
+    setUpdateMode(mode);
+    api.update.setMode(mode);
   }
 
   async function checkNow() {
@@ -106,18 +106,30 @@ export function SystemPanel({
         {logStatus && <span className="inline-status">{logStatus}</span>}
       </div>
       <div className="theme-row">
-        <span className="theme-label">atualizar</span>
+        <span className="theme-label">instalação</span>
         <div className="mode-pills slim">
           <button
-            className={`pill ${autoUpdate ? 'active' : ''}`}
-            onClick={() => changeAutoUpdate(true)}
-            title="Procura versão nova no GitHub ao abrir e a cada 6 horas; nada é instalado sem você pedir"
+            className={`pill ${updateMode === 'auto' ? 'active' : ''}`}
+            onClick={() => changeUpdateMode('auto')}
+            title="Baixa a versão nova e reinicia sozinho, nunca durante a escuta"
           >
-            avisar
+            automática
           </button>
-          <button className={`pill ${!autoUpdate ? 'active' : ''}`} onClick={() => changeAutoUpdate(false)}>não</button>
+          <button
+            className={`pill ${updateMode === 'manual' ? 'active' : ''}`}
+            onClick={() => changeUpdateMode('manual')}
+            title="Baixa a versão nova e espera você clicar em reiniciar"
+          >
+            manual
+          </button>
         </div>
         <button className="chip" onClick={checkNow}>verificar</button>
+      </div>
+      <div className="panel-note">
+        O Teka procura versão nova a cada 1 h e já baixa sozinho.{' '}
+        {updateMode === 'auto'
+          ? 'Na automática, reinicia na versão nova quando você não estiver ouvindo nem mexendo nele.'
+          : 'Na manual, avisa que está pronta e você reinicia quando quiser.'}
       </div>
       {version && (
         <div className="panel-note">

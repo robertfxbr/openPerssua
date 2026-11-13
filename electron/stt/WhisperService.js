@@ -8,11 +8,14 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { composePrompt } = require('./vocabulary');
+const { PACKS, serverFor, parseBackend } = require('./GpuRuntime');
 
 const MAX_BUFFER_BYTES = 16 * 1024 * 1024; // equivalente ao CappedAudioBuffer
-const SERVER_PORT = 8178;
+// TEKA_STT_PORT só para testes: uma cópia de teste não pode cair no servidor
+// do Teka que já está rodando no PC
+const SERVER_PORT = Number(process.env.TEKA_STT_PORT) || 8178;
 const MODEL_LOAD_TIMEOUT_MS = 120000; // modelos grandes demoram
-const DETECT_PORT = 8179; // servidor do detector de idioma (modo PT+EN)
+const DETECT_PORT = SERVER_PORT + 1; // servidor do detector de idioma (modo PT+EN)
 const DETECT_MODEL = 'ggml-tiny.bin';
 // pt e en: idioma fixo. pten: detecta português ou inglês a cada fala.
 // auto: qualquer idioma (o Whisper decide; não aparece na tela).
@@ -47,6 +50,7 @@ class WhisperService {
       main: { proc: null, ready: null, model: null, stderrTail: '' },
       detector: { proc: null, ready: null, model: null, stderrTail: '' },
     };
+    this.gpu = { enabled: false, kinds: [] }; // placa de vídeo (ver setGpu)
     this.downloads = new Map();   // nome -> promise do download em andamento
     this.progress = new Map();    // nome -> { received, total }
     this.controllers = new Map(); // nome -> AbortController (cancelar)
@@ -205,16 +209,53 @@ class WhisperService {
   // Um whisper-server por "vaga" (main = transcrição, detector = idioma).
   // Trocar o modelo de uma vaga reinicia o processo dela: o servidor carrega
   // o ggml uma única vez no boot.
+  // Com "usar a placa de vídeo" ligado, tenta primeiro o whisper-server da
+  // placa (CUDA ou Vulkan) e, se ele não subir, o do processador. Assim uma
+  // placa sem driver ou sem suporte nunca deixa a escuta sem transcrição.
   _ensure(slot, modelPath, port) {
     const st = this.servers[slot];
-    if (st.ready && st.model !== modelPath) this._stop(slot);
+    if (st.ready && (st.model !== modelPath || st.gpuWanted !== this.gpu.enabled)) this._stop(slot);
     if (st.ready) return st.ready;
 
-    const { binary, candidates } = this.findBinary();
-    if (!binary) {
+    const { binary: cpuBinary, candidates } = this.findBinary();
+    const chain = [];
+    if (this.gpu.enabled) {
+      for (const kind of this.gpu.kinds) {
+        const bin = serverFor(this.userDataDir, kind);
+        if (bin) chain.push({ binary: bin, kind });
+      }
+    }
+    if (cpuBinary) chain.push({ binary: cpuBinary, kind: 'cpu' });
+    if (!chain.length) {
       throw new Error(`whisper-server não encontrado em nenhum destes caminhos: ${candidates.join(' | ')}`);
     }
 
+    st.gpuWanted = this.gpu.enabled;
+    st.gpuError = null;
+    const ready = (async () => {
+      let lastErr = null;
+      for (const step of chain) {
+        try {
+          const r = await this._spawn(slot, modelPath, port, step.binary);
+          st.backend = step.kind === 'cpu' ? { kind: 'cpu', device: null } : (parseBackend(st.bootLog) || { kind: 'cpu', device: null });
+          if (step.kind !== 'cpu' && st.backend.kind === 'cpu') st.gpuError = 'a placa não foi aceita pelo Whisper; usando o processador';
+          return r;
+        } catch (err) {
+          lastErr = err;
+          if (step.kind !== 'cpu') st.gpuError = `a placa falhou (${String(err.message || err).slice(0, 200)}); usando o processador`;
+          if (st.proc) { st.proc.kill(); st.proc = null; }
+        }
+      }
+      throw lastErr;
+    })();
+    st.ready = ready;
+    ready.catch(() => { if (st.ready === ready) st.ready = null; });
+    return ready;
+  }
+
+  // Sobe um whisper-server e espera ele responder
+  _spawn(slot, modelPath, port, binary) {
+    const st = this.servers[slot];
     const proc = spawn(binary, [
       '--model', modelPath,
       '--host', '127.0.0.1',
@@ -238,7 +279,13 @@ class WhisperService {
     });
     if (proc.pid) lowerPriority(proc.pid);
     st.stderrTail = '';
-    proc.stderr.on('data', (d) => { st.stderrTail = (st.stderrTail + d.toString()).slice(-2000); });
+    // Começo do log guardado à parte: é nele que o servidor diz se a placa entrou
+    st.bootLog = '';
+    proc.stderr.on('data', (d) => {
+      const s = d.toString();
+      if (st.bootLog.length < 16000) st.bootLog += s;
+      st.stderrTail = (st.stderrTail + s).slice(-2000);
+    });
     st.proc = proc;
     st.model = modelPath;
     // Só limpa a vaga se ainda for este processo: ao trocar de modelo, o
@@ -249,7 +296,7 @@ class WhisperService {
 
     // Poll de readiness em vez de sleep fixo: modelos ggml-medium/large
     // levam muito mais que 1,5s para carregar.
-    const ready = (async () => {
+    return (async () => {
       const deadline = Date.now() + MODEL_LOAD_TIMEOUT_MS;
       while (Date.now() < deadline) {
         if (st.proc !== proc) throw new Error(`whisper-server encerrou durante o carregamento: ${st.stderrTail.trim().split(/\r?\n/).slice(-3).join(' | ')}`);
@@ -261,9 +308,27 @@ class WhisperService {
       }
       throw new Error('timeout aguardando whisper-server carregar o modelo');
     })();
-    st.ready = ready;
-    ready.catch(() => { if (st.ready === ready) st.ready = null; });
-    return ready;
+  }
+
+  // enabled: usar a placa; kinds: pacotes na ordem de tentativa (ex.: ['cuda', 'vulkan'])
+  setGpu({ enabled, kinds }) {
+    const next = { enabled: Boolean(enabled), kinds: Array.isArray(kinds) ? kinds.filter((k) => PACKS[k]) : this.gpu.kinds };
+    const changed = next.enabled !== this.gpu.enabled || next.kinds.join() !== this.gpu.kinds.join();
+    this.gpu = next;
+    // Sem escuta, os servidores param já; com escuta, a troca vale na próxima
+    if (changed && this.sessions.size === 0) for (const slot of Object.keys(this.servers)) this._stop(slot);
+  }
+
+  // O que a transcrição está usando agora, para a aba "voz"
+  gpuStatus() {
+    const main = this.servers.main;
+    return {
+      enabled: this.gpu.enabled,
+      running: Boolean(main.ready),
+      backend: main.ready ? main.backend || null : null,
+      error: main.gpuError || null,
+      installed: Object.fromEntries(Object.keys(PACKS).map((k) => [k, Boolean(serverFor(this.userDataDir, k))])),
+    };
   }
 
   _stop(slot) {
@@ -272,6 +337,7 @@ class WhisperService {
     st.proc = null;
     st.ready = null;
     st.model = null;
+    st.backend = null;
   }
 
   async startSession({ sessionId, source = 'mic', model = 'ggml-base.bin', language = 'pt', prompt, fast = false, onProgress }) {

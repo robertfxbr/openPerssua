@@ -7,6 +7,91 @@ function formatMB(bytes) {
   return mb >= 1000 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 }
 
+const BACKEND_LABEL = { vulkan: 'Vulkan', cuda: 'CUDA', cpu: 'processador' };
+
+// Whisper na placa de vídeo: baixar o suporte uma vez, ligar e ver o que
+// está em uso de fato (a placa pode falhar e cair para o processador).
+function GpuSection({ listening, onError }) {
+  const [st, setSt] = useState(null);
+  const [prog, setProg] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  function refresh() {
+    api.stt.gpuStatus?.().then(setSt).catch(() => {});
+  }
+
+  useEffect(() => {
+    refresh();
+    const unsub = api.stt.onGpuProgress?.((p) => setProg(p)) || (() => {});
+    // o servidor sobe quando a escuta começa: o "em uso" se atualiza sozinho
+    const timer = setInterval(refresh, 3000);
+    return () => { unsub(); clearInterval(timer); };
+  }, []);
+
+  if (!st) return null;
+  const kind = st.gpu?.pack;
+  const pack = kind ? st.packs[kind] : null;
+  const installed = kind ? st.installed[kind] : false;
+  const downloading = busy || Boolean(st.installing);
+  const p = prog || st.installing?.progress;
+  const pct = p?.total ? Math.round((p.received / p.total) * 100) : null;
+
+  async function install() {
+    setBusy(true);
+    setProg(null);
+    const r = await api.stt.gpuInstall();
+    setBusy(false);
+    if (!r?.ok && r?.error !== 'download cancelado') onError?.(`placa de vídeo: ${r?.error || 'falha no download'}`);
+    if (r?.ok) await api.stt.gpuSet(true);
+    refresh();
+  }
+
+  async function toggle(enabled) {
+    await api.stt.gpuSet(enabled);
+    refresh();
+  }
+
+  const using = st.running && st.backend
+    ? (st.backend.kind === 'cpu' ? 'processador' : `${BACKEND_LABEL[st.backend.kind]}${st.backend.device ? ` · ${st.backend.device}` : ''}`)
+    : null;
+
+  return (
+    <>
+      <div className="panel-section">placa de vídeo</div>
+      {!st.gpu ? (
+        <div className="panel-note">Nenhuma placa de vídeo compatível encontrada. A transcrição usa o processador.</div>
+      ) : (
+        <>
+          <div className="panel-note">
+            <b>{st.gpu.name}</b> · usa {pack.label}{kind === 'cuda' ? ' (NVIDIA)' : ''}. Na placa, cada fala sai várias vezes mais rápido e quase não pesa no processador, e os modelos grandes ficam viáveis ao vivo.
+          </div>
+          {!installed ? (
+            downloading ? (
+              <div className="model-row">
+                <div className="model-info">
+                  <span className="assistant-name">baixando suporte à placa</span>
+                  <div className="level-track"><div className="level-fill mic" style={{ width: `${pct ?? 2}%` }} /></div>
+                </div>
+                <span className="inline-status">{pct !== null ? `${pct}%` : '…'}</span>
+                <button className="mini-link" onClick={() => api.stt.gpuCancel()}>cancelar</button>
+              </div>
+            ) : (
+              <button className="chip" onClick={install}>baixar suporte à placa (~{formatMB(pack.size)})</button>
+            )
+          ) : (
+            <label className="option-label">
+              <input type="checkbox" checked={st.enabled} onChange={(e) => toggle(e.target.checked)} /> Usar a placa de vídeo na transcrição
+            </label>
+          )}
+          {using && <div className="panel-note">em uso agora: {using}</div>}
+          {st.error && <div className="panel-note">{st.error}</div>}
+          {installed && listening && <div className="panel-note">Ligar ou desligar vale a partir da próxima escuta.</div>}
+        </>
+      )}
+    </>
+  );
+}
+
 // Aba "voz": modelos do Whisper (baixar, usar, apagar), idioma, vocabulário
 // e o tratamento do microfone (eco e ruído).
 export function VoicePanel({
@@ -100,6 +185,8 @@ export function VoicePanel({
         })}
       </div>
       {listening && <div className="panel-note">A troca de modelo vale a partir da próxima escuta.</div>}
+
+      <GpuSection listening={listening} onError={onError} />
 
       <div className="theme-row">
         <span className="theme-label">idioma</span>
