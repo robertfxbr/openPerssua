@@ -965,6 +965,25 @@ function App() {
     runAssist(q, undefined, { draft: assistModeRef.current === 'interview' });
   }
 
+  // Clique numa fala: o copiloto responde a ela, mesmo se já estiver
+  // respondendo outra (a resposta em andamento dá lugar à nova). Com texto
+  // selecionado, o clique é de quem quer copiar e não dispara nada.
+  async function answerLine(line) {
+    if (window.getSelection()?.toString().trim()) return;
+    if (!line?.text?.trim()) return;
+    clearTimeout(pendingRef.current?.timer);
+    pendingRef.current = null;
+    clearTimeout(refreshTimerRef.current);
+    const sid = assistStreamIdRef.current;
+    if (sid) {
+      assistSupersededRef.current = true;
+      api.llm.abortStream(sid);
+    }
+    if (assistBusyRef.current) await (assistSettledRef.current || Promise.resolve());
+    lastAssistAtRef.current = Date.now(); // o auto não atropela logo em seguida
+    runAssist(line.text);
+  }
+
   async function runAssist(q, instruction, opts = {}) {
     if (assistBusyRef.current) return;
     assistBusyRef.current = true;
@@ -2151,6 +2170,7 @@ function App() {
             A transcrição da conversa aparece aqui.
             <br />No modo <b>Entrevista</b> com <b>auto</b> ligado, o copiloto
             <br />rascunha sua resposta enquanto o entrevistador ainda fala.
+            <br />Clique numa fala para ver uma resposta para ela.
             <br />
             <span className="hint">
               {hintKey('toggle-listen')} ouvir · {hintKey('assist')} sugerir · {hintKey('copy-suggestion')} copiar
@@ -2159,8 +2179,19 @@ function App() {
           </div>
         )}
         {transcript.map((t, i) => (
-          <div key={t.id ?? i} className={`bubble ${t.source}`}>
-            <span className="who">{t.source === 'mic' ? 'Você' : 'Reunião'}</span>
+          <div
+            key={t.id ?? i}
+            className={`bubble ${t.source} clickable ${suggestion?.question === t.text ? 'answered' : ''}`}
+            role="button"
+            tabIndex={0}
+            title="Clique para o copiloto responder a esta fala"
+            onClick={() => answerLine(t)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); answerLine(t); } }}
+          >
+            <span className="who">
+              {t.source === 'mic' ? 'Você' : 'Reunião'}
+              <span className="reply-hint"><Sparkles size={9} /> responder</span>
+            </span>
             {t.text}
             {t.translation && <span className="translation">{t.translation}</span>}
           </div>

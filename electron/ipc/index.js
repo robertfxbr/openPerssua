@@ -14,7 +14,7 @@ const gpuRuntime = require('../stt/GpuRuntime');
 const { isSecret, MASK } = require('../settings/SettingsStore');
 const { TokenStore } = require('../llm/providers/ChatGPTOAuthAdapter');
 const {
-  setClickThrough, toggleOverlay, setCompactMode, repaintOverlay, persistWindowState,
+  setClickThrough, toggleOverlay, setCompactMode, repaintOverlay, persistWindowState, DEFAULT_WIDTH,
 } = require('../windows/OverlayWindow');
 const { buildMessages } = require('../prompts');
 const { buildPingMessages } = require('../prompts/followup');
@@ -83,7 +83,7 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
         win.setBounds({
           x: savedBounds?.x ?? win.getBounds().x,
           y: savedBounds?.y ?? win.getBounds().y,
-          width: savedBounds?.width || 420,
+          width: savedBounds?.width || DEFAULT_WIDTH,
           height: savedBounds?.height || 640,
         });
         savedBounds = null;

@@ -1603,3 +1603,20 @@ svg.lucide { flex-shrink: 0; }
   border: 1px solid color-mix(in srgb, var(--lilac) 40%, transparent);
   color: var(--text);
 }
+
+/* fala clicável: abre uma resposta para ela */
+.bubble.clickable { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+.bubble.clickable:hover,
+.bubble.clickable:focus-visible { border-color: color-mix(in srgb, var(--mint) 55%, transparent); outline: none; }
+.bubble.answered { border-color: var(--mint); box-shadow: 0 0 0 1px color-mix(in srgb, var(--mint) 35%, transparent); }
+.bubble .reply-hint {
+  margin-left: 8px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--mint);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.bubble.clickable:hover .reply-hint,
+.bubble.clickable:focus-visible .reply-hint,
+.bubble.answered .reply-hint { opacity: 1; }

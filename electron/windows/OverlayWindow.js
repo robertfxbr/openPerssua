@@ -19,6 +19,12 @@ function setCompactMode(enabled) {
   compactMode = Boolean(enabled);
 }
 
+// Largura padrão. Era 420 até a 0.4.10 e ficava apertado.
+const DEFAULT_WIDTH = 630;
+const OLD_DEFAULT_WIDTH = 420;
+// Versão do arquivo de estado: sem ela, a largura salva é da época dos 420
+const STATE_VERSION = 2;
+
 // Posição/tamanho persistidos: o overlay reabre onde o usuário deixou
 function statePath() {
   return path.join(app.getPath('userData'), 'window-state.json');
@@ -32,15 +38,26 @@ function loadWindowState() {
       s.x >= d.workArea.x - 8 && s.y >= d.workArea.y - 8
       && s.x < d.workArea.x + d.workArea.width
       && s.y < d.workArea.y + d.workArea.height);
-    if (onScreen && s.width >= 280 && s.height >= 120) return s;
+    if (onScreen && s.width >= 280 && s.height >= 120) return widenOldState(s);
   } catch { /* sem estado salvo */ }
   return null;
+}
+
+// Quem estava na largura antiga ganha a nova uma vez. A janela cresce para
+// a esquerda (a borda direita fica onde estava), sem sair da tela.
+function widenOldState(s) {
+  if (s.v >= STATE_VERSION || s.width > OLD_DEFAULT_WIDTH) return s;
+  const d = screen.getDisplayNearestPoint({ x: Math.round(s.x), y: Math.round(s.y) }).workArea;
+  const width = Math.min(DEFAULT_WIDTH, d.width);
+  const right = s.x + s.width;
+  const x = Math.max(d.x, Math.min(right - width, d.x + d.width - width));
+  return { ...s, x, width };
 }
 
 function saveWindowState(win) {
   if (compactMode) return; // tamanho do modo mini não vira o padrão
   try {
-    fs.writeFileSync(statePath(), JSON.stringify(win.getBounds()));
+    fs.writeFileSync(statePath(), JSON.stringify({ ...win.getBounds(), v: STATE_VERSION }));
   } catch { /* falha em salvar posição não é crítica */ }
 }
 
@@ -50,9 +67,9 @@ function createOverlayWindow({ isDev }) {
   const saved = loadWindowState();
 
   overlayWindow = new BrowserWindow({
-    width: saved?.width || 420,
+    width: saved?.width || DEFAULT_WIDTH,
     height: saved?.height || 640,
-    x: saved?.x ?? width - 440,
+    x: saved?.x ?? width - DEFAULT_WIDTH - 20,
     y: saved?.y ?? 80,
     frame: false,
     transparent: true,
@@ -92,6 +109,8 @@ function createOverlayWindow({ isDev }) {
   }
 
   overlayWindow.on('closed', () => { overlayWindow = null; });
+  // grava a largura nova já com a versão, para não alargar de novo
+  if (saved && saved.v !== STATE_VERSION) saveWindowState(overlayWindow);
   return overlayWindow;
 }
 
@@ -149,6 +168,7 @@ function persistWindowState() {
 }
 
 module.exports = {
+  DEFAULT_WIDTH,
   createOverlayWindow,
   getOverlayWindow,
   toggleOverlay,
