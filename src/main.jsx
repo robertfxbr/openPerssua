@@ -9,6 +9,9 @@ import { ShortcutsPanel } from './panels/ShortcutsPanel';
 import { SystemPanel } from './panels/SystemPanel';
 import { AIPanel } from './panels/AIPanel';
 import { AssistantsPanel } from './panels/AssistantsPanel';
+import { ToolsPanel } from './panels/ToolsPanel';
+import { McpConfirmations } from './panels/McpConfirmations';
+import { normalizePreferences } from './assistants/preferences.mjs';
 import { VoicePanel } from './panels/VoicePanel';
 import { DiagnosticsPanel } from './panels/DiagnosticsPanel';
 import { parseAssistantImport } from './assistants/transfer.mjs';
@@ -188,6 +191,12 @@ function App() {
   const [customAssistants, setCustomAssistants] = useState([]);
   const [assistantContexts, setAssistantContexts] = useState({});
   const [assistantPreferences, setAssistantPreferences] = useState({});
+  const [answerTools, setAnswerTools] = useState([]);
+  const [screenTools, setScreenTools] = useState([]);
+  useEffect(() => api.mcp.onUsed(({ streamId, used }) => {
+    if (streamId && streamId === askStreamIdRef.current) setAnswerTools(used);
+    if (streamId && streamId === screenStreamIdRef.current) setScreenTools(used);
+  }), []);
   const [compactEnabled, setCompactEnabled] = useState(true);
   const [thinkMore, setThinkMore] = useState(false);
   const [longListenReminder, setLongListenReminder] = useState(false);
@@ -322,7 +331,7 @@ function App() {
       const contexts = {};
       const preferences = {};
       for (const [key, value] of Object.entries(all)) {
-        if (key.startsWith('assistant.preferences.')) preferences[key.slice(22)] = { certainOnly: value?.certainOnly === true };
+        if (key.startsWith('assistant.preferences.')) preferences[key.slice(22)] = normalizePreferences(value);
         if (key.startsWith('assistant.context.')) contexts[key.slice(18)] = normalizeContext(value);
       }
       setAssistantContexts(contexts);
@@ -534,7 +543,7 @@ function App() {
   }
 
   function saveAssistantPreferences(id, value) {
-    const preferences = { certainOnly: value?.certainOnly === true };
+    const preferences = normalizePreferences(value);
     setAssistantPreferences((all) => ({ ...all, [id]: preferences }));
     return api.settings.set(`assistant.preferences.${id}`, preferences).catch((e) => setError(`assistente: ${e.message}`));
   }
@@ -1270,6 +1279,7 @@ function App() {
     if (!q.trim() || busy) return;
     setError('');
     setAnswer('');
+    setAnswerTools([]);
     setAnswerQuestions(null);
     setAnswerNote(context ? `sobre o trecho copiado (${context.length} caracteres)` : '');
     setBusy(true);
@@ -1301,6 +1311,7 @@ function App() {
     try {
       const { streamId } = await api.llm.chatStream({
         streamId: requestedStreamId,
+        assistantId,
         question: q,
         ...liveContext(),
         assistant: assistantRef.current || undefined,
@@ -1345,6 +1356,7 @@ function App() {
     if (screenStreamIdRef.current || screenResult?.capturing) return;
     setError('');
     const q = question.trim();
+    setScreenTools([]);
     setScreenResult({ image: null, question: q, text: '', streaming: true, capturing: true });
 
     setScreenQuestions(null);
@@ -1383,6 +1395,7 @@ function App() {
     try {
       await api.llm.chatStream({
         mode: 'screen',
+        assistantId,
         streamId,
         image: shot.dataUrl,
         question: q,
@@ -1521,7 +1534,7 @@ function App() {
       {showTheme && (
         <div className="theme-panel">
           <div className="settings-tabs">
-            {[['aparencia', 'visual'], ['ia', 'IA'], ['assistentes', 'assistentes'], ['voz', 'voz'], ['atalhos', 'atalhos'], ['sistema', 'sistema']].map(([id, label]) => (
+            {[['aparencia', 'visual'], ['ia', 'IA'], ['assistentes', 'assistentes'], ['ferramentas', 'ferramentas'], ['voz', 'voz'], ['atalhos', 'atalhos'], ['sistema', 'sistema']].map(([id, label]) => (
               <button
                 key={id}
                 className={`settings-tab ${settingsTab === id ? 'active' : ''}`}
@@ -1533,6 +1546,7 @@ function App() {
           </div>
 
           {settingsTab === 'atalhos' && <ShortcutsPanel onChange={setShortcutList} />}
+          {settingsTab === 'ferramentas' && <ToolsPanel />}
 
           {settingsTab === 'sistema' && (
             <SystemPanel
@@ -1913,6 +1927,7 @@ function App() {
             <img className="screen-thumb" src={screenResult.image} alt="captura analisada" />
           )}
           {screenResult.question && <div className="sug-question">“{screenResult.question}”</div>}
+          {!!screenTools.length && <div className="mcp-used">Ferramentas: {screenTools.map(t => `${t.serverName || 'MCP'} · ${t.name}${t.isError ? ' (erro)' : ''}`).join(', ')}</div>}
           <div className="sug-text">
             {screenResult.text || (screenResult.capturing ? 'capturando a tela…' : 'analisando…')}
           </div>
@@ -1952,6 +1967,7 @@ function App() {
         <div className="answer">
           <span className="label">✦ resposta{answerNote ? ` · ${answerNote}` : ''}</span>
           {answer}
+          {!!answerTools.length && <div className="mcp-used">Ferramentas: {answerTools.map(t => `${t.serverName || 'MCP'} · ${t.name}${t.isError ? ' (erro)' : ''}`).join(', ')}</div>}
           {!busy && <SuggestedQuestions key={answerQuestions?.answer} seed={answerQuestions} onAsk={ask} onError={setError} />}
         </div>
       )}
@@ -2087,4 +2103,4 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<><App /><McpConfirmations /></>);

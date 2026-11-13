@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { serializeAssistants, parseAssistantImport, MAX_TRANSFER_BYTES, MAX_CUSTOM_ASSISTANTS } from '../assistants/transfer.mjs';
 import { normalizeAssistant, INSTRUCTION_USES, DEFAULT_CATEGORIES, filterAssistants, categoryCounts } from '../assistants/model.mjs';
 import { AssistantContextEditor } from './AssistantContextEditor';
+import { AssistantMcpEditor } from './AssistantMcpEditor';
 import { BUILTIN_ASSISTANTS, ASSISTANT_MODES } from '../assistants/presets';
 
 const MODE_LABEL = Object.fromEntries(ASSISTANT_MODES);
@@ -147,6 +148,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
               onChange={(e) => setEditing({ ...editing, instructionsByUse: { ...editing.instructionsByUse, [key]: e.target.value } })} />
           </label>)}
         </details>
+        <AssistantMcpEditor value={editing.preferencesCopy} onChange={value => setEditing({ ...editing, preferencesCopy: value })} />
         <div className="ob-nav">
           <button className="auth-link" onClick={() => setEditing(null)}>cancelar</button>
           <div style={{ flex: 1 }} />
@@ -167,16 +169,17 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
         ? a.id !== 'padrao' && <button className="mini-link" title="Duplicar para editar" disabled={custom.length >= MAX_CUSTOM_ASSISTANTS} onClick={() => startNew(a)}>⧉</button>
         : (
           <>
-            <button className="mini-link" title="Editar" onClick={() => setEditing({ ...normalizeAssistant(a), isNew: false })}>✎</button>
+            <button className="mini-link" title="Editar" onClick={() => setEditing({ ...normalizeAssistant(a), preferencesCopy: preferences[a.id], isNew: false })}>✎</button>
             <button className="mini-link danger" title="Excluir" onClick={() => remove(a.id)}>🗑</button>
           </>
         )}
     </div>
     {contextId === a.id && <div className="assistant-context">
       <label className="option-label"><input type="checkbox" checked={preferences[a.id]?.certainOnly === true}
-        onChange={(e) => onPreferencesChange(a.id, { certainOnly: e.target.checked })} /> Responder só com certeza</label>
+        onChange={(e) => onPreferencesChange(a.id, { ...preferences[a.id], certainOnly: e.target.checked })} /> Responder só com certeza</label>
       <div className="panel-note">Usa apenas a transcrição e os contextos. Se faltar base, avisa.</div>
       <AssistantContextEditor key={a.id} value={contexts[a.id]} onChange={(value) => onContextChange(a.id, value)} />
+      <AssistantMcpEditor value={preferences[a.id]} onChange={value => onPreferencesChange(a.id, value)} />
     </div>}
     </React.Fragment>
   );

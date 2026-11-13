@@ -1257,3 +1257,21 @@ html, body, #root {
 .assistant-filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .assistant-filters .model-input { flex: 1; min-width: 100px; }
 .assistant-category { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+
+/* MCP: controles compactos e conteúdo externo sempre como texto. */
+.settings-tabs { flex-wrap: wrap; }
+.mcp-panel { display: flex; flex-direction: column; gap: 8px; font-size: 11px; min-width: 0; }
+.mcp-server, .mcp-form { padding: 8px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.mcp-server summary { cursor: pointer; overflow-wrap: anywhere; }
+.mcp-server .assistant-filters { margin: 7px 0; }
+.mcp-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.mcp-field input, .mcp-field textarea, .mcp-field select { width: 100%; box-sizing: border-box; margin: 0; }
+.mcp-tool { padding: 6px 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.mcp-tool select { max-width: 100%; }
+.mcp-error { overflow-wrap: anywhere; white-space: pre-wrap; font-size: 11px; }
+.mcp-confirm { position: fixed; z-index: 1000; top: 8px; left: 8px; right: 8px; max-height: calc(100vh - 32px); overflow: auto; padding: 12px; border: 1px solid var(--mint); border-radius: 10px; background: var(--bg); color: var(--text); box-shadow: 0 4px 24px #0008; font-size: 12px; -webkit-app-region: no-drag; }
+.mcp-confirm pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; font-size: 11px; }
+.mcp-used { color: var(--text-dim); font-size: 10px; margin: 5px 0; white-space: normal; }
+.mcp-confirm { background: rgb(from var(--bg) r g b / 1); }
+.mcp-panel select { border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; color: var(--text); background: var(--surface); font: inherit; }
+.mcp-panel option { color: var(--text); background: rgb(from var(--bg) r g b / 1); }

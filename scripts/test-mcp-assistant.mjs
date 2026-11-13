@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { serializeAssistants, parseAssistantImport } from '../src/assistants/transfer.mjs';
+import { normalizePreferences } from '../src/assistants/preferences.mjs';
+const assistant = { id: 'c-teste', name: 'Teste', mode: 'meeting', instructions: 'Consulta notas' };
+const prefs = { certainOnly: true, mcpServerIds: ['servidor-local'], mcpInstructions: { choice: 'Priorize notas', result: 'Preserve datas', next: 'Evite repetições' }, env: { TOKEN: 'segredo-falso' }, headers: { Authorization: 'segredo-falso' } };
+const exported = serializeAssistants([assistant], {}, { 'c-teste': prefs });
+assert(!exported.includes('segredo-falso')); assert(!exported.includes('servidor-local'));
+const [imported] = parseAssistantImport(exported, []);
+assert.equal(imported.preferences.mcpInstructions.choice, 'Priorize notas');
+assert.equal(imported.preferences.mcpServerIds, undefined);
+assert.deepEqual(normalizePreferences({ certainOnly: true }), { certainOnly: true });
+assert.deepEqual(normalizePreferences({ mcpServerIds: ['a', 'a', 1, '../x'] }).mcpServerIds, ['a']);
+const malicious = JSON.parse(exported); malicious.assistants[0].preferences.mcpServerIds = ['servidor-local'];
+assert.equal(parseAssistantImport(JSON.stringify(malicious), [])[0].preferences.mcpServerIds, undefined);
+malicious.assistants[0].preferences.mcpInstructions.choice = 5;
+assert.throws(() => parseAssistantImport(JSON.stringify(malicious), []));
+console.log('PASS assistente MCP: instruções portáveis, permissões locais e exclusão de segredos');

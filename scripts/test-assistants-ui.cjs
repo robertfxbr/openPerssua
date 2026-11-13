@@ -16,6 +16,7 @@ const assert = require('node:assert/strict');
 const { pdfBytes } = require('./fixtures/pdf.cjs');
 const { SettingsStore } = require('../electron/settings/SettingsStore');
 const { buildMessages } = require('../electron/prompts');
+const { registerMcpIpc } = require('../electron/mcp/ipc');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'teka-assistants-ui-'));
 app.setPath('userData', temp);
 app.commandLine.appendSwitch('use-fake-device-for-media-stream');
@@ -29,6 +30,8 @@ let delayedSettings = false;
 let createdSessions = 0;
 let resumedSessions = 0;
 let stoppedStt = 0;
+let mcp;
+let mcpQueries = 0;
 const savedTranscriptions = [];
 
 const timer = setTimeout(() => { console.error('Tempo limite do teste de interface'); app.exit(1); }, 80000);
@@ -73,6 +76,7 @@ app.whenReady().then(async () => {
   await settings.set('assistants.custom', [{ id: 'c-antigo', name: 'Legado', mode: 'interview', instructions: 'GERAL_LEGADO' }]);
   await settings.set('assistants.active', 'c-antigo');
   await settings.set('assist.auto', false);
+  mcp = registerMcpIpc({ ipcMain, safeStorage: require('electron').safeStorage, settingsStore: settings });
   ipcMain.handle('settings:get', (_e, key) => settings.get(key));
   ipcMain.handle('settings:get-all', () => settings.getAll());
   ipcMain.handle('settings:set', async (_e, { key, value }) => {
@@ -97,9 +101,18 @@ app.whenReady().then(async () => {
   ipcMain.handle('disable-loopback-audio', () => ({ ok: true }));
   ipcMain.handle('overlay:set-compact', () => ({ ok: true }));
   ipcMain.handle('overlay:show', () => undefined);
+  ipcMain.handle('screen:capture', () => ({ ok: true, dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=' }));
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'media'));
-  ipcMain.handle('llm:chat-stream', (event, req) => {
-    const messages = buildMessages(req); requests.push({ ...req, messages });
+  ipcMain.handle('llm:chat-stream', async (event, req) => {
+    const prepared = await mcp.prepare(req, { sender: event.sender, streamId: req.streamId, signal: new AbortController().signal,
+      chat: async messages => {
+        mcpQueries++;
+        if (messages[0].content.includes('Resuma o resultado bruto')) return '{"context":"A soma é 5."}';
+        if (messages[0].content.includes('Decida se os resultados')) return '{"action":"answer"}';
+        const [server] = await mcp.manager.list();
+        return JSON.stringify({ action: 'call', tool: `${server.id}:somar`, arguments: { a: 2, b: 3 } });
+      } });
+    const messages = buildMessages(prepared); requests.push({ ...req, messages });
     setTimeout(() => {
       event.sender.send('llm:stream-chunk', { streamId: req.streamId, delta: 'Resposta fictícia para o teste.' });
       event.sender.send('llm:stream-done', { streamId: req.streamId });
@@ -291,6 +304,55 @@ app.whenReady().then(async () => {
   assert.equal(await js(`document.querySelector('.assistant-context input[type=checkbox]').checked`), true);
   await new Promise((resolve) => setTimeout(resolve, 350));
   fs.writeFileSync(path.join(temp, 'interface.png'), (await win.webContents.capturePage()).toPNG());
+  console.log('UI: ferramentas MCP com servidor Node e cifra do sistema');
+  await click('ferramentas');
+  await click('+ adicionar servidor');
+  await setValue('[aria-label="Nome"]', 'Teste MCP');
+  await setValue('[aria-label="Comando"]', 'node');
+  await setValue('[aria-label="Argumentos (array JSON)"]', JSON.stringify([path.join(__dirname, 'fixtures/mcp-server.cjs')]));
+  await setValue('[aria-label="Variáveis de ambiente (objeto JSON)"]', '{"TOKEN":"segredo-ui-ficticio"}');
+  await click('salvar servidor');
+  await waitFor(() => js(`document.querySelector('.mcp-server') !== null`), 'servidor salvo');
+  await clickSelector('.mcp-server summary'); await click('ligar'); await click('testar / reconectar');
+  await waitFor(() => js(`document.querySelectorAll('.mcp-tool').length === 2`), 'duas ferramentas');
+  await waitFor(() => js(`![...document.querySelectorAll('.mcp-panel button')].some(b => b.textContent === 'testar / reconectar' && b.disabled)`), 'teste concluído');
+  assert.equal(await js(`document.querySelector('[aria-label="Modo de somar"]').value`), 'confirm');
+  assert(!fs.readFileSync(settings.filePath, 'utf8').includes('segredo-ui-ficticio'));
+  assert(!JSON.stringify(await settings.getAll()).includes('mcp.servers'));
+  assert.equal(await js(`document.querySelector('.theme-panel').scrollWidth > document.querySelector('.theme-panel').clientWidth + 1`), false);
+  fs.writeFileSync(path.join(temp, 'mcp-ferramentas.png'), (await win.webContents.capturePage()).toPNG());
+  await click('assistentes'); await clickSelector('.assistant-row.active [title^="Contexto de"]');
+  await clickSelector('.assistant-context .mcp-assistant summary');
+  await waitFor(() => js(`document.querySelector('.assistant-context .mcp-assistant input') !== null`), 'seleção MCP');
+  await clickSelector('.assistant-context .mcp-assistant input');
+  await waitFor(async () => (await settings.get('assistant.preferences.c-antigo'))?.mcpServerIds?.length === 1, 'permissão salva');
+  await clickSelector('[title="Configurações"]');
+  await setValue('.composer input', 'Quanto é 2 mais 3?'); await clickSelector('.composer .send-btn');
+  await waitFor(() => js(`document.querySelector('.mcp-confirm') !== null`), 'confirmação MCP');
+  assert((await js(`document.querySelector('.mcp-confirm pre').textContent`)).includes('"a": 2'));
+  assert(!(await js(`getComputedStyle(document.querySelector('.mcp-confirm')).backgroundColor`)).includes('0.95'));
+  fs.writeFileSync(path.join(temp, 'mcp-confirmacao.png'), (await win.webContents.capturePage()).toPNG());
+  await click('negar');
+  await waitFor(() => js(`document.querySelector('.mcp-confirm') === null && document.querySelector('.composer .send-btn')?.textContent.trim() === '↑'`), 'negar e responder');
+  assert(!requests.at(-1).messages[1].content.includes('A soma é 5'));
+  await setValue('.composer input', 'Quanto é 2 mais 3?'); await clickSelector('.composer .send-btn');
+  await waitFor(() => js(`document.querySelector('.mcp-confirm') !== null`), 'segunda confirmação MCP'); await click('permitir');
+  await waitFor(() => js(`document.querySelector('.mcp-used')?.textContent.includes('somar')`), 'ferramenta usada');
+  await waitFor(() => js(`document.querySelector('.composer .send-btn')?.textContent.trim() === '↑'`), 'resposta final MCP');
+  assert(requests.at(-1).messages[1].content.includes('A soma é 5'));
+  assert(mcpQueries >= 4);
+  await setValue('.composer input', 'Some os valores desta tela'); await clickSelector('.composer [title^="Analisar a tela"]');
+  await waitFor(() => js(`document.querySelector('.mcp-confirm') !== null`), 'confirmação na análise de tela'); await click('permitir');
+  await waitFor(() => js(`document.querySelector('.screen-card .mcp-used')?.textContent.includes('somar')`), 'ferramenta na tela');
+  await waitFor(() => js(`document.querySelector('.screen-card .sug-text')?.textContent.includes('Resposta fictícia')`), 'resposta de tela com MCP');
+  await waitFor(() => js(`document.querySelector('.screen-thumb')?.naturalWidth === 1`), 'miniatura carregada pela CSP');
+  assert.equal(requests.at(-1).mode, 'screen'); assert(requests.at(-1).messages[1].content.includes('A soma é 5'));
+  await new Promise(resolve => { win.webContents.once('did-finish-load', resolve); win.reload(); });
+  await waitFor(() => js(`document.querySelector('.profile-row select')?.value === 'c-antigo'`), 'recarregar MCP');
+  await clickSelector('[title="Configurações"]'); await click('assistentes');
+  await clickSelector('.assistant-row.active [title^="Contexto de"]'); await clickSelector('.assistant-context .mcp-assistant summary');
+  await waitFor(() => js(`document.querySelector('.assistant-context .mcp-assistant input')?.checked === true`), 'permissão MCP persistida');
+  mcp.dispose();
   assert.deepEqual(errors, []);
   console.log('PASS: UI compilada, legado, texto/PDF em worker, limites, certeza, categorias, exportar/importar, exclusões concorrentes, extração cancelada, prompts, pausa/retomada e persistência');
   console.log(`Evidência visual e dados fictícios: ${temp}`);

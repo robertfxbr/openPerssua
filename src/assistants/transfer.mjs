@@ -1,6 +1,7 @@
 import { BUILTIN_ASSISTANTS } from './presets.js';
 import { normalizeAssistant, INSTRUCTION_USES } from './model.mjs';
 import { normalizeContext, MAX_CONTEXT_CHARS, MAX_CONTEXT_FILES } from './context.mjs';
+import { exportPreferences, MCP_STAGES } from './preferences.mjs';
 
 export const MAX_TRANSFER_BYTES = 20 * 1024 * 1024;
 export const MAX_CUSTOM_ASSISTANTS = 100;
@@ -26,6 +27,10 @@ function validateItem(item, index) {
   for (const [key, label] of INSTRUCTION_USES) string(item.instructionsByUse?.[key], label, 4000, true);
   if (item.preferences !== undefined && !object(item.preferences)) throw new Error('Preferências inválidas.');
   if (item.preferences?.certainOnly !== undefined && typeof item.preferences.certainOnly !== 'boolean') throw new Error('A opção de certeza deve ser ligada ou desligada.');
+  if (item.preferences?.mcpInstructions !== undefined) {
+    if (!object(item.preferences.mcpInstructions)) throw new Error('Instruções MCP inválidas.');
+    for (const [key, label] of MCP_STAGES) string(item.preferences.mcpInstructions[key], label, 4000, true);
+  }
   const context = item.context ?? { text: '', files: [] };
   if (!object(context)) throw new Error('Contexto inválido.');
   const text = string(context.text, 'Contexto', MAX_CONTEXT_CHARS, true);
@@ -40,13 +45,13 @@ function validateItem(item, index) {
   if (total > MAX_CONTEXT_CHARS) throw new Error('O contexto excede 20.000 caracteres.');
   // Reconstrói somente campos conhecidos; nenhum comando ou caminho é usado.
   return { ...normalizeAssistant({ ...item, name }), context: normalizeContext(context),
-    preferences: { certainOnly: item.preferences?.certainOnly === true } };
+    preferences: exportPreferences(item.preferences) };
 }
 
 export function serializeAssistants(custom, contexts, preferences) {
   const assistants = custom.filter((a) => !BUILTIN_ASSISTANTS.some((b) => b.id === a.id)).map((a) => ({
     ...normalizeAssistant(a), context: normalizeContext(contexts[a.id]),
-    preferences: { certainOnly: preferences[a.id]?.certainOnly === true },
+    preferences: exportPreferences(preferences[a.id]),
   }));
   const json = JSON.stringify({ format: 'teka-assistants', version: 1, assistants }, null, 2);
   // Usa a mesma validação da importação para garantir ida e volta.
