@@ -33,7 +33,8 @@ async function orchestrate({ req, manager, chat, confirm, signal, onUsed = () =>
     for (let attempt = 0; attempt < 2; attempt++) {
       const messages = orchestrationMessages(stage, data, req.mcpInstructions?.[stage]);
       if (attempt) messages[0].content += '\nA resposta anterior não respeitou o formato. Corrija e devolva apenas o JSON exigido.';
-      try { return parse(stage, await bounded(() => chat(messages, active), active)); }
+      const raw = await bounded(() => chat(messages, active), active);
+      try { return parse(stage, raw); }
       catch (error) { if (active.aborted || attempt) throw error; }
     }
   };

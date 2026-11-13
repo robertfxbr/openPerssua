@@ -29,6 +29,8 @@ async function scenario(outputs, { mode = 'auto', allowed = true, req = {}, tota
   assert.equal((await scenario([call, { context: '5' }, call, { context: '10' }, answer])).calls, 2);
   assert.equal((await scenario([call, { context: '5' }, call, { context: '5' }, call, { context: '5' }, call])).calls, 3);
   assert.equal((await scenario([() => 'inválido', () => 'inválido'])).calls, 0);
+  const unavailable = await scenario([() => { throw new Error('Provedor indisponível'); }, call]);
+  assert.equal(unavailable.calls, 0); assert.equal(unavailable.prompts.length, 1);
   assert.equal((await scenario([() => 'inválido', call, { context: '5' }, answer])).calls, 1);
   assert.equal((await scenario([call], { mode: 'off' })).calls, 0);
   const denied = await scenario([call], { mode: 'confirm', confirmation: false });
