@@ -22,7 +22,7 @@ import { findEcho, ECHO_WINDOW_MS } from './audio/echo';
 import { formatClock } from './util/time';
 import { prettyAccelerator } from './util/accelerator';
 import {
-  History, Settings2, Minimize2, Maximize2, EyeOff, Mic, Square, LoaderCircle, Sparkles, Camera,
+  History, Settings2, Minimize2, Maximize2, EyeOff, Ghost, MousePointerClick, Mic, Square, LoaderCircle, Sparkles, Camera,
   ClipboardPaste, ArrowUp, Zap, IdCard, ChevronDown, ChevronUp, Mail, X, Copy,
 } from 'lucide-react';
 import '@fontsource-variable/bricolage-grotesque';
@@ -172,6 +172,8 @@ function App() {
 
   // ---- modo mini / níveis de áudio / tema / onboarding ----
   const [compact, setCompact] = useState(false);
+  // Modo fantasma (fica no processo principal; aqui só o espelho para a UI)
+  const [ghost, setGhostState] = useState({ hidden: false, clickThrough: false, hideTray: false });
   const [levels, setLevels] = useState({ mic: 0, sys: 0 });
   const [theme, setTheme] = useState(DEFAULT_THEME);
   const [showTheme, setShowTheme] = useState(false);
@@ -382,8 +384,12 @@ function App() {
       askRef.current?.({ question: CLIPBOARD_DEFAULT_QUESTION, context: text });
     });
     const unsubProg = api.stt.onModelProgress((p) => setModelProgress(p));
+    api.overlay.getGhost?.().then((g) => g && setGhostState(g)).catch(() => {});
+    // Atalho e bandeja também mudam o fantasma: a UI só acompanha
+    const unsubGhost = api.overlay.onGhostChanged?.((g) => setGhostState((cur) => ({ ...cur, ...g }))) || (() => {});
 
     return () => {
+      unsubGhost();
       unsubDelta();
       unsubTrig();
       unsubCopy();
@@ -1470,6 +1476,26 @@ function App() {
     return `${prettyAccelerator(s.accelerator)}${s.registered ? '' : ' ⚠'}`;
   }
 
+  async function changeGhost(patch) {
+    try {
+      const g = await api.overlay.setGhost(patch);
+      if (g) setGhostState(g);
+    } catch (e) {
+      setError(`modo fantasma: ${e?.message || e}`);
+    }
+  }
+
+  const ghostTitle = ghost.hidden
+    ? `Modo fantasma ligado: some do compartilhamento de tela e de gravações (${hintKey('toggle-ghost')})`
+    : `Modo fantasma: sumir do compartilhamento de tela e de gravações (${hintKey('toggle-ghost')})`;
+
+  // Com os cliques atravessando, nada na janela responde ao mouse: o aviso
+  // diz qual atalho devolve o controle.
+  const clickThroughNotice = ghost.clickThrough ? <div className="ghost-notice">
+    <MousePointerClick size={13} />
+    <span>cliques atravessam a janela · {hintKey('toggle-click-through')} volta</span>
+  </div> : null;
+
   const listenNotice = listenDeadline !== null && listening ? <div className="listen-notice" role="alert">
     <span>continuar ouvindo? A escuta pausa em até 60 s.</span>
     <button className="chip" onClick={() => { listenReminderRef.current?.confirm(); setListenDeadline(null); }}>continuar</button>
@@ -1485,8 +1511,9 @@ function App() {
         : answer ? { kind: 'resposta', text: answer, streaming: busy }
           : null;
     return (
-      <div className="app compact">
+      <div className={`app compact ${ghost.clickThrough ? 'passthrough' : ''}`}>
         {listenNotice}
+        {clickThroughNotice}
         <div className="compact-bar">
           <TekaMark size={18} />
           <button
@@ -1502,6 +1529,7 @@ function App() {
           <button className="icon-btn" title={`Sugerir o que dizer agora (${hintKey('assist')})`} onClick={() => runAssist(lastQuestionRef.current || '')} disabled={busy || suggestion?.streaming}><Sparkles size={15} /></button>
           <button className="icon-btn" title={`Analisar a tela (${hintKey('screenshot')})`} onClick={runScreenAnalysis} disabled={Boolean(screenResult?.streaming)}><Camera size={15} /></button>
           <button className="icon-btn" title="Copiar o texto abaixo" onClick={() => card && copyText(card.text)} disabled={!card?.text}><Copy size={15} /></button>
+          <button className={`icon-btn ghost-btn ${ghost.hidden ? 'active' : ''}`} title={ghostTitle} onClick={() => changeGhost({ hidden: !ghost.hidden })}><Ghost size={15} /></button>
           <button className="icon-btn" title="Voltar à janela completa" onClick={toggleCompact}><Maximize2 size={15} /></button>
           <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}><EyeOff size={15} /></button>
         </div>
@@ -1556,7 +1584,7 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${ghost.clickThrough ? 'passthrough' : ''}`}>
       <div className="header">
         <div className="logo">
           <TekaMark size={24} />
@@ -1568,11 +1596,13 @@ function App() {
         </div>
         <button className="icon-btn" title="Histórico de sessões" onClick={openHistory}><History size={16} /></button>
         <button className={`icon-btn ${showTheme ? 'active' : ''}`} title="Configurações" onClick={() => setShowTheme(!showTheme)}><Settings2 size={16} /></button>
+        <button className={`icon-btn ghost-btn ${ghost.hidden ? 'active' : ''}`} title={ghostTitle} onClick={() => changeGhost({ hidden: !ghost.hidden })}><Ghost size={16} /></button>
         <button className="icon-btn" title="Modo mini" onClick={toggleCompact}><Minimize2 size={16} /></button>
         <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}><EyeOff size={16} /></button>
       </div>
 
       {listenNotice}
+      {clickThroughNotice}
       {showTheme && (
         <div className="theme-panel">
           <div className="settings-tabs">
@@ -1708,6 +1738,13 @@ function App() {
               onChange={(e) => updateTheme({ fontScale: Number(e.target.value) })}
             />
           </div>
+          <div className="panel-section">modo fantasma</div>
+          <label className="option-label"><input type="checkbox" checked={ghost.hidden} onChange={(e) => changeGhost({ hidden: e.target.checked })} /> Sumir do compartilhamento de tela ({hintKey('toggle-ghost')})</label>
+          <div className="panel-note">Quem assiste à sua tela (Meet, Zoom, Teams, Discord, OBS) e prints veem o que está atrás do Teka. Na sua tela ele continua normal. O Teka já não aparece na barra de tarefas nem no Alt+Tab.</div>
+          <label className="option-label"><input type="checkbox" checked={ghost.hideTray} onChange={(e) => changeGhost({ hideTray: e.target.checked })} /> Tirar também o ícone da bandeja</label>
+          <div className="panel-note">Só vale com o fantasma ligado. Para mostrar ou esconder o Teka, use {hintKey('toggle-overlay')}.</div>
+          <label className="option-label"><input type="checkbox" checked={ghost.clickThrough} onChange={(e) => changeGhost({ clickThrough: e.target.checked })} /> Cliques atravessam a janela ({hintKey('toggle-click-through')})</label>
+          <div className="panel-note">O mouse passa pelo Teka e clica no app de baixo. Os atalhos continuam funcionando; o mesmo atalho devolve o mouse.</div>
           </>)}
         </div>
       )}

@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { app, clipboard, session, Tray, Menu, nativeImage } = require('electron');
+const { app, clipboard, session, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const log = require('electron-log');
 
 // Captura de áudio do sistema (loopback: Discord/Zoom/Meet) — o plugin
@@ -14,6 +14,7 @@ initAudioLoopback();
 
 const {
   createOverlayWindow, getOverlayWindow, toggleOverlay, repaintOverlay, persistWindowState,
+  setGhost, getGhost,
 } = require('./windows/OverlayWindow');
 const { registerIpc, disposeIpc } = require('./ipc');
 const { DatabaseManager } = require('./db/DatabaseManager');
@@ -89,19 +90,54 @@ async function checkUpdates(settingsStore, manual) {
   }
 }
 
-function createTray(settingsStore) {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'));
-  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
-  tray.setToolTip('Teka');
-  tray.setContextMenu(Menu.buildFromTemplate([
+// Modo fantasma: muda a janela, guarda a escolha e acerta a bandeja.
+// "Cliques atravessam" não é guardado: se o app abrisse assim, o usuário
+// não conseguiria clicar nele.
+async function changeGhost(settingsStore, patch) {
+  const next = setGhost(patch);
+  if (typeof patch.hidden === 'boolean') await settingsStore.set('ui.ghost', next.hidden);
+  if (typeof patch.hideTray === 'boolean') await settingsStore.set('ui.ghostHideTray', patch.hideTray);
+  await syncTray(settingsStore);
+  const full = { ...next, hideTray: Boolean(await settingsStore.get('ui.ghostHideTray')) };
+  // A UI acompanha também quando a mudança vem da bandeja ou do atalho
+  const win = getOverlayWindow();
+  if (win && !win.webContents.isDestroyed()) win.webContents.send('overlay:ghost-changed', full);
+  return full;
+}
+
+// Com o fantasma ligado e "esconder da bandeja" marcado, o ícone some da
+// área de notificação e o Teka volta pelos atalhos.
+async function syncTray(settingsStore) {
+  const hideTray = getGhost().hidden && Boolean(await settingsStore.get('ui.ghostHideTray'));
+  if (hideTray) {
+    if (tray) { tray.destroy(); tray = null; }
+    return;
+  }
+  if (!tray) createTray(settingsStore);
+  else tray.setContextMenu(trayMenu(settingsStore));
+}
+
+function trayMenu(settingsStore) {
+  const g = getGhost();
+  return Menu.buildFromTemplate([
     { label: 'Mostrar/Ocultar', click: () => toggleOverlay(isDev) },
     { label: 'Mover para o próximo monitor', click: () => moveOverlayToNextDisplay() },
+    { type: 'separator' },
+    { label: 'Modo fantasma (some do compartilhamento de tela)', type: 'checkbox', checked: g.hidden, click: () => changeGhost(settingsStore, { hidden: !g.hidden }) },
+    { label: 'Cliques atravessam a janela', type: 'checkbox', checked: g.clickThrough, click: () => changeGhost(settingsStore, { clickThrough: !g.clickThrough }) },
     { type: 'separator' },
     { label: 'Verificar atualizações', click: () => checkUpdates(settingsStore, true) },
     { label: 'Abrir pasta de logs', click: () => openLogsFolder() },
     { type: 'separator' },
     { label: 'Sair', click: () => app.quit() },
-  ]));
+  ]);
+}
+
+function createTray(settingsStore) {
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png'));
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+  tray.setToolTip('Teka');
+  tray.setContextMenu(trayMenu(settingsStore));
   tray.on('click', () => toggleOverlay(isDev));
 }
 
@@ -132,7 +168,22 @@ async function bootstrap() {
         sendToOverlay('overlay:clipboard-prompt', { text });
       },
       'next-display': () => moveOverlayToNextDisplay(),
+      'toggle-ghost': () => changeGhost(settingsStore, { hidden: !getGhost().hidden }),
+      'toggle-click-through': () => changeGhost(settingsStore, { clickThrough: !getGhost().clickThrough }),
     },
+  });
+
+  // O fantasma escolhido vale desde a primeira pintura da janela
+  setGhost({ hidden: Boolean(await settingsStore.get('ui.ghost')) });
+  ipcMain.handle('overlay:get-ghost', async () => ({
+    ...getGhost(), hideTray: Boolean(await settingsStore.get('ui.ghostHideTray')),
+  }));
+  ipcMain.handle('overlay:set-ghost', (_e, patch = {}) => {
+    const clean = {};
+    for (const k of ['hidden', 'clickThrough', 'hideTray']) {
+      if (typeof patch[k] === 'boolean') clean[k] = patch[k];
+    }
+    return changeGhost(settingsStore, clean);
   });
 
   createOverlayWindow({ isDev });
@@ -141,7 +192,7 @@ async function bootstrap() {
     getOverlayWindow()?.webContents.once('did-finish-load', () => confirmBoot(app.getPath('userData')));
   }
   registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts });
-  createTray(settingsStore);
+  await syncTray(settingsStore);
   await shortcuts.init();
 
   if (!isDev) {

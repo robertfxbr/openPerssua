@@ -17,6 +17,9 @@ const SHORTCUT_ACTIONS = [
   { id: 'screenshot', label: 'Analisar a tela', defaults: ['CommandOrControl+Shift+X'] },
   { id: 'clipboard-prompt', label: 'Perguntar sobre o texto copiado', defaults: ['CommandOrControl+Shift+K'] },
   { id: 'next-display', label: 'Mover para o próximo monitor', defaults: ['CommandOrControl+Alt+Right'] },
+  // Ctrl+Alt+G/T: no teclado ABNT2, AltGr+G e AltGr+T não digitam nada
+  { id: 'toggle-ghost', label: 'Modo fantasma (some do compartilhamento de tela)', defaults: ['CommandOrControl+Alt+G', 'CommandOrControl+Shift+F9'] },
+  { id: 'toggle-click-through', label: 'Cliques atravessam a janela', defaults: ['CommandOrControl+Alt+T', 'CommandOrControl+Shift+F10'] },
 ];
 
 class ShortcutManager {

@@ -10,6 +10,11 @@ const fs = require('fs');
 let overlayWindow = null;
 let compactMode = false; // não persistir o tamanho da pílula como tamanho padrão
 
+// Modo fantasma. hidden: a janela some de compartilhamento de tela, gravação
+// e print (no Windows 10 2004+ vira WDA_EXCLUDEFROMCAPTURE: quem assiste vê o
+// que está atrás dela). clickThrough: o mouse atravessa a janela.
+let ghost = { hidden: false, clickThrough: false };
+
 function setCompactMode(enabled) {
   compactMode = Boolean(enabled);
 }
@@ -53,6 +58,10 @@ function createOverlayWindow({ isDev }) {
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
+    // "toolbar" no Windows = WS_EX_TOOLWINDOW: a janela não ganha botão na
+    // barra de tarefas nem aparece no Alt+Tab, mesmo depois de esconder e
+    // mostrar de novo.
+    type: process.platform === 'win32' ? 'toolbar' : undefined,
     resizable: true,
     hasShadow: false,
     // marca do Teka no Alt+Tab (o ícone do .exe vem do instalador)
@@ -69,8 +78,8 @@ function createOverlayWindow({ isDev }) {
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
-  // Click-through desligado por padrão; renderer alterna via ipc
-  overlayWindow.setIgnoreMouseEvents(false);
+  // Proteção de captura e click-through conforme o modo fantasma
+  applyGhost(overlayWindow);
 
   // Persiste posição/tamanho ao arrastar ou redimensionar
   overlayWindow.on('moved', () => saveWindowState(overlayWindow));
@@ -93,12 +102,31 @@ function getOverlayWindow() {
 function toggleOverlay(isDev) {
   const win = getOverlayWindow() || createOverlayWindow({ isDev });
   if (win.isVisible()) win.hide();
-  else { win.show(); win.focus(); }
+  else { win.show(); win.setSkipTaskbar(true); win.focus(); }
+}
+
+function applyGhost(win = getOverlayWindow()) {
+  if (!win || win.isDestroyed()) return;
+  win.setContentProtection(ghost.hidden);
+  win.setIgnoreMouseEvents(ghost.clickThrough, { forward: true });
+}
+
+// Recebe só os campos que mudam e devolve o estado completo.
+function setGhost(patch = {}) {
+  if (typeof patch.hidden === 'boolean') ghost = { ...ghost, hidden: patch.hidden };
+  if (typeof patch.clickThrough === 'boolean') ghost = { ...ghost, clickThrough: patch.clickThrough };
+  applyGhost();
+  const win = getOverlayWindow();
+  if (win && !win.webContents.isDestroyed()) win.webContents.send('overlay:ghost-changed', { ...ghost });
+  return { ...ghost };
+}
+
+function getGhost() {
+  return { ...ghost };
 }
 
 function setClickThrough(enabled) {
-  const win = getOverlayWindow();
-  if (win) win.setIgnoreMouseEvents(enabled, { forward: true });
+  setGhost({ clickThrough: Boolean(enabled) });
 }
 
 // Bug conhecido do Electron no Windows: janela transparente não repinta
@@ -125,6 +153,8 @@ module.exports = {
   getOverlayWindow,
   toggleOverlay,
   setClickThrough,
+  setGhost,
+  getGhost,
   setCompactMode,
   repaintOverlay,
   persistWindowState,

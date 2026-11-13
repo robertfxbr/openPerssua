@@ -1541,3 +1541,28 @@ svg.lucide { flex-shrink: 0; }
 .compact-ask input:focus { border-color: var(--mint); }
 .compact-ask input::placeholder { color: var(--text-dim); }
 .compact-ask .send-btn { width: 30px; height: 30px; border-radius: 9px; }
+
+/* ---------- modo fantasma ---------- */
+.icon-btn.ghost-btn.active {
+  background: var(--mint-soft);
+  color: var(--mint);
+  border-color: color-mix(in srgb, var(--mint) 45%, transparent);
+}
+.ghost-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 14px 8px;
+  padding: 5px 10px;
+  border-radius: 9px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mint);
+  background: var(--mint-soft);
+  border: 1px dashed color-mix(in srgb, var(--mint) 45%, transparent);
+}
+.app.compact .ghost-notice { margin: 4px 8px 0; padding: 3px 8px; }
+/* sem mouse, a janela fica um pouco mais apagada para lembrar que é "vidro" */
+.app.passthrough { opacity: 0.82; }
+.option-label input[type='checkbox'] { accent-color: var(--mint); }
