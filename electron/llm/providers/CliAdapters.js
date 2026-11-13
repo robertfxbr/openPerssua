@@ -112,9 +112,17 @@ class CodexCliAdapter extends CliAdapter {
     });
   }
 
+  // Esforço de raciocínio por uso. Sem "pensar mais", vale o que o usuário
+  // configurou no próprio Codex (pode já ser alto); com ele, pede o máximo.
+  // Um esforço recusado pelo modelo fica memorizado: cada tentativa recusada
+  // custa uma execução inteira da CLI (uns 5 s medidos com gpt-6.1-sol, que
+  // não aceita "minimal").
   async run({ prompt, model, onChunk, signal, fast, thinkMore }) {
     const help = fast || thinkMore ? await cliHelp('codex') : '';
-    const efforts = fast ? ['minimal', 'low', undefined] : thinkMore ? ['medium', 'high', 'low', undefined] : [undefined];
+    const wanted = fast ? ['minimal', 'low', undefined] : thinkMore ? ['xhigh', 'high', undefined] : [undefined];
+    if (!this.rejectedEffort) this.rejectedEffort = new Set();
+    const key = (e) => `${model || ''}|${e}`;
+    const efforts = wanted.filter((e) => e === undefined || !this.rejectedEffort.has(key(e)));
     const base = ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--color', 'never', ...this.modelArgs(model)];
     for (let i = 0; i < efforts.length; i++) {
       const args = cliEffortArgs('codex', efforts[i], help);
@@ -122,6 +130,7 @@ class CodexCliAdapter extends CliAdapter {
         return await runCli({ cmd: this.cmd, args: [...base, ...args], prompt, onChunk, signal, label: 'Codex CLI' });
       } catch (e) {
         if (!args.length || signal?.aborted || !isEffortError(e) || i === efforts.length - 1) throw e;
+        this.rejectedEffort.add(key(efforts[i]));
       }
     }
   }

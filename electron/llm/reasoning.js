@@ -9,7 +9,8 @@ function reasoningOptions(req, enabled) {
 
 function effortCandidates({ fast, thinkMore }) {
   return fast ? ['none', 'minimal', 'low', undefined]
-    : thinkMore ? ['medium', 'high', 'low', 'none', undefined] : ['low', undefined];
+    // "pensar mais" é escolha explícita do usuário: começa pelo mais alto
+    : thinkMore ? ['high', 'medium', 'low', 'none', undefined] : ['low', undefined];
 }
 
 function cliEffortArgs(cmd, effort, help) {

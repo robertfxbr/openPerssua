@@ -51,7 +51,7 @@ class ClaudeCodeAdapter {
 
   async runWithEffort(prompt, onChunk, signal, { fast, thinkMore }) {
     const help = fast || thinkMore ? await cliHelp('claude') : '';
-    const effortArgs = cliEffortArgs('claude', fast ? 'low' : thinkMore ? 'medium' : undefined, help);
+    const effortArgs = cliEffortArgs('claude', fast ? 'low' : thinkMore ? 'high' : undefined, help);
     let emitted = false;
     const emit = onChunk ? (text) => { emitted = true; onChunk(text); } : null;
     try { return await this.run(prompt, emit, signal, effortArgs); }

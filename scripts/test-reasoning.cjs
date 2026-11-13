@@ -11,7 +11,7 @@ const { reasoningOptions, effortCandidates, cliEffortArgs } = require('../electr
   assert.equal(reasoningOptions({ mode: 'summary' }, true).thinkMore, false);
   assert.equal(reasoningOptions({}, false).thinkMore, false);
   assert.deepEqual(effortCandidates({ fast: true, thinkMore: true }).slice(0, 3), ['none', 'minimal', 'low']);
-  assert.equal(effortCandidates({ thinkMore: true })[0], 'medium');
+  assert.equal(effortCandidates({ thinkMore: true })[0], 'high');
   assert.deepEqual(cliEffortArgs('codex', 'medium', '--config <key=value>'), ['-c', 'model_reasoning_effort=medium']);
   assert.deepEqual(cliEffortArgs('claude', 'low', '--effort <level>'), ['--effort', 'low']);
   assert.deepEqual(cliEffortArgs('claude', 'medium', 'versão antiga'), []);
@@ -33,7 +33,7 @@ const { reasoningOptions, effortCandidates, cliEffortArgs } = require('../electr
   adapter.getValidToken = async () => ({ access_token: 'teste.local' });
   const req = { messages: [{ role: 'user', content: 'Teste' }], model: 'modelo-teste', thinkMore: true };
   assert.equal(await adapter.chat(req), 'OK');
-  assert.deepEqual(requests.map((r) => r.reasoning?.effort), ['medium', 'high', 'low']);
+  assert.deepEqual(requests.map((r) => r.reasoning?.effort), ['high', 'medium', 'low']);
   requests.length = 0;
   await adapter.chat(req);
   assert.deepEqual(requests.map((r) => r.reasoning?.effort), ['low']);
