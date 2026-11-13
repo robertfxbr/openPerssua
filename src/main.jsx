@@ -13,6 +13,7 @@ import { VoicePanel } from './panels/VoicePanel';
 import { DiagnosticsPanel } from './panels/DiagnosticsPanel';
 import { contextToText, normalizeContext } from './assistants/context.mjs';
 import { BUILTIN_ASSISTANTS, findAssistant } from './assistants/presets';
+import { createListenReminder } from './audio/listenReminder.mjs';
 import { findEcho, ECHO_WINDOW_MS } from './audio/echo';
 import { formatClock } from './util/time';
 import { prettyAccelerator } from './util/accelerator';
@@ -188,6 +189,8 @@ function App() {
   const [assistantPreferences, setAssistantPreferences] = useState({});
   const [compactEnabled, setCompactEnabled] = useState(true);
   const [thinkMore, setThinkMore] = useState(false);
+  const [longListenReminder, setLongListenReminder] = useState(false);
+  const [listenDeadline, setListenDeadline] = useState(null);
   const [memory, setMemory] = useState('');
   const [translate, setTranslate] = useState(DEFAULT_TRANSLATE);
   const [echoFilter, setEchoFilter] = useState(true);
@@ -232,6 +235,8 @@ function App() {
   const sysWindowRef = useRef([]);   // últimas falas do sistema p/ detector com contexto
   const pendingRef = useRef(null);   // pergunta sem "?" aguardando continuação
   const vadRef = useRef({});         // estado VAD por slot (mic|sys)
+  const listenReminderRef = useRef(null);
+  const stoppingRef = useRef(false);
   const toggleListenRef = useRef(null); // p/ atalho global sem closure obsoleta
   const entryIdRef = useRef(0);          // id de cada fala (tradução e eco mexem nelas)
   const pendingMicWritesRef = useRef(new Map()); // falas do mic esperando a checagem de eco
@@ -308,6 +313,7 @@ function App() {
     loadFlag('stt.fast', setSttFast);
     loadFlag('llm.compact', setCompactEnabled);
     loadFlag('llm.thinkMore', setThinkMore);
+    loadFlag('audio.longListenReminder', setLongListenReminder);
     api.settings.get('translate.config').then((t) => t && setTranslate({ ...DEFAULT_TRANSLATE, ...t }));
     api.settings.getAll().then((all) => {
       const contexts = {};
@@ -642,6 +648,19 @@ function App() {
     }, 180);
     return () => clearInterval(id);
   }, [listening]);
+
+  useEffect(() => {
+    setListenDeadline(null);
+    if (!listening || !longListenReminder) return undefined;
+    const reminder = createListenReminder({ startedAt: sessionStartRef.current ?? Date.now(),
+      onWarn: setListenDeadline,
+      onPause: () => { setListenDeadline(null); toggleListenRef.current?.({ pause: true }); },
+    });
+    listenReminderRef.current = reminder;
+    reminder.tick();
+    const timer = setInterval(() => reminder.tick(), 1000);
+    return () => { clearInterval(timer); reminder.cancel(); listenReminderRef.current = null; };
+  }, [listening, longListenReminder]);
 
   function readLevel(slot) {
     const a = audioRef.current?.[slot];
@@ -987,8 +1006,13 @@ function App() {
   // Pelo botão do microfone o argumento é o evento de clique, então só um
   // texto em resumeId conta como pedido de retomada.
   async function toggleListening(opts) {
+    if (stoppingRef.current) return;
     setError('');
     if (listening) {
+      stoppingRef.current = true;
+      const pausing = opts?.pause === true;
+      setListening(false);
+      setListenDeadline(null);
       stopAllCaptures();
       const sess = sessionRef.current;
       const lines = transcriptRef.current;
@@ -1002,13 +1026,15 @@ function App() {
         api.db.endSession(sess.dbId).catch(() => {});
       }
       setListening(false);
-      setResumeTarget(null);
+      setResumeTarget(pausing && sess ? { id: sess.dbId, paused: true } : null);
       setLevels({ mic: 0, sys: 0 });
-      summarizeSession(sess?.dbId, lines); // resumo automático em background
+      stoppingRef.current = false;
+      if (pausing) setError('Escuta pausada pelo lembrete. Suas falas estão salvas; toque no microfone para continuar.');
+      else summarizeSession(sess?.dbId, lines); // resumo automático em background
       return;
     }
     if (starting) return; // clique duplo durante preparo/download — ignora
-    const resumeId = typeof opts?.resumeId === 'string' ? opts.resumeId : null;
+    const resumeId = typeof opts?.resumeId === 'string' ? opts.resumeId : resumeTarget?.paused ? resumeTarget.id : null;
     setStarting(true);
     setModelProgress(null);
     let dbId = null;
@@ -1032,7 +1058,7 @@ function App() {
         fast: sttFastRef.current,
       });
       sessionRef.current = { dbId, micSttId, sysSttId: null };
-      resetMemory(dbId);
+      if (!(resumeId && resumeTarget?.paused)) resetMemory(dbId);
       await startMicCapture(micSttId);
       sessionStartRef.current = Date.now();
       setListening(true);
@@ -1381,10 +1407,17 @@ function App() {
     return `${prettyAccelerator(s.accelerator)}${s.registered ? '' : ' ⚠'}`;
   }
 
+  const listenNotice = listenDeadline !== null && listening ? <div className="listen-notice" role="alert">
+    <span>continuar ouvindo? A escuta pausa em até 60 s.</span>
+    <button className="chip" onClick={() => { listenReminderRef.current?.confirm(); setListenDeadline(null); }}>continuar</button>
+    <button className="mini-link" onClick={() => toggleListening({ pause: true })}>pausar agora</button>
+  </div> : null;
+
   // ---- modo mini: pílula com status + última sugestão ----
   if (compact) {
     return (
       <div className="app compact">
+        {listenNotice}
         <div className="compact-bar">
           <button className="icon-btn" title="Expandir" onClick={toggleCompact}>▢</button>
           <span className={`status-dot ${listening ? 'on' : ''}`} />
@@ -1414,6 +1447,7 @@ function App() {
   if (view === 'history') {
     return (
       <HistoryView
+        notice={listenNotice}
         onBack={() => setView('live')}
         onResume={resumeFromHistory}
         onError={setError}
@@ -1446,6 +1480,7 @@ function App() {
         <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}>—</button>
       </div>
 
+      {listenNotice}
       {showTheme && (
         <div className="theme-panel">
           <div className="settings-tabs">
@@ -1523,6 +1558,8 @@ function App() {
 
           {settingsTab === 'voz' && (
             <VoicePanel
+              longListenReminder={longListenReminder}
+              onLongListenReminderChange={(v) => changeFlag('audio.longListenReminder', setLongListenReminder, v)}
               sttModel={sttModel}
               onSelectModel={selectSttModel}
               sttLang={sttLang}
@@ -1687,7 +1724,7 @@ function App() {
           </span>
         ) : (
           <span className="hero-label">
-            {resumeTarget ? 'retomando a sessão…' : 'toque para ouvir a reunião'}
+            {resumeTarget?.paused ? 'escuta pausada · toque para continuar' : resumeTarget ? 'retomando a sessão…' : 'toque para ouvir a reunião'}
           </span>
         )}
       </div>

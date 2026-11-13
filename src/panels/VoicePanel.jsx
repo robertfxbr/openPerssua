@@ -10,6 +10,7 @@ function formatMB(bytes) {
 // Aba "voz": modelos do Whisper (baixar, usar, apagar), idioma, vocabulário
 // e o tratamento do microfone (eco e ruído).
 export function VoicePanel({
+  longListenReminder, onLongListenReminderChange,
   sttModel, onSelectModel, sttLang, onLang, sttPrompt, onPrompt,
   echoFilter, onEchoFilter, noiseSuppression, onNoise, sttFast, onSttFast, listening, onError,
 }) {
@@ -50,6 +51,8 @@ export function VoicePanel({
 
   return (
     <>
+      <label className="option-label"><input type="checkbox" checked={longListenReminder} onChange={(e) => onLongListenReminderChange(e.target.checked)} /> Lembrete de escuta longa</label>
+      <div className="panel-note">Após 30 minutos, pede para continuar. Sem resposta em 60 segundos, pausa e mantém as falas salvas.</div>
       <div className="panel-section">modelo de transcrição (roda no seu PC)</div>
       <div className="model-list">
         {models.map((m) => {

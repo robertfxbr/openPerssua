@@ -56,7 +56,7 @@ function sessionToMarkdown({ session, transcriptions, messages }) {
 
 // Tela de histórico: lista, renomear, excluir, limpar tudo, ver detalhes,
 // exportar em Markdown e retomar uma sessão antiga.
-export function HistoryView({ onBack, onResume, onError, copyText, listening, activeSessionId, model, assistant, assistantInstructionsByUse, assistantContext, profile }) {
+export function HistoryView({ notice, onBack, onResume, onError, copyText, listening, activeSessionId, model, assistant, assistantInstructionsByUse, assistantContext, profile }) {
   const [sessions, setSessions] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [stats, setStats] = useState(null);
@@ -207,6 +207,7 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
 
   return (
     <div className="app">
+      {notice}
       <div className="header">
         <button className="icon-btn" title="Voltar" onClick={() => (detail ? setDetail(null) : onBack())}>←</button>
         <div className="logo">
