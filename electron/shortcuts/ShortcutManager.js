@@ -10,11 +10,14 @@ const log = require('electron-log');
 
 const SHORTCUT_ACTIONS = [
   { id: 'toggle-overlay', label: 'Mostrar/ocultar o overlay', defaults: ['CommandOrControl+Shift+Space'] },
-  { id: 'toggle-listen', label: 'Ligar/desligar a escuta', defaults: ['CommandOrControl+Shift+M'] },
+  // Ctrl+Shift+M é o "mutar" do Discord: cai para F8 (teclas F não digitam
+  // nada e não brigam com o AltGr do ABNT2)
+  { id: 'toggle-listen', label: 'Ligar/desligar a escuta', defaults: ['CommandOrControl+Shift+M', 'CommandOrControl+Shift+F8'] },
   { id: 'assist', label: 'Sugerir o que dizer agora', defaults: ['CommandOrControl+Shift+Enter'] },
   // Ctrl+Shift+C costuma estar ocupado (terminal, outros copilotos): cai para Y
   { id: 'copy-suggestion', label: 'Copiar a última sugestão', defaults: ['CommandOrControl+Shift+C', 'CommandOrControl+Shift+Y'] },
-  { id: 'screenshot', label: 'Analisar a tela', defaults: ['CommandOrControl+Shift+X'] },
+  // Ctrl+Shift+X costuma ser de programa de captura de tela: cai para F7
+  { id: 'screenshot', label: 'Analisar a tela', defaults: ['CommandOrControl+Shift+X', 'CommandOrControl+Shift+F7'] },
   { id: 'clipboard-prompt', label: 'Perguntar sobre o texto copiado', defaults: ['CommandOrControl+Shift+K'] },
   { id: 'next-display', label: 'Mover para o próximo monitor', defaults: ['CommandOrControl+Alt+Right'] },
   // Ctrl+Alt+G/T: no teclado ABNT2, AltGr+G e AltGr+T não digitam nada
