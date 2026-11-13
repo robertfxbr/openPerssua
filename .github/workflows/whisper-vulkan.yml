@@ -1,0 +1,79 @@
+# Monta o whisper.cpp com Vulkan para Windows (placas AMD e Intel).
+#
+# O projeto whisper.cpp publica versões prontas para Windows só de CPU e de
+# CUDA (NVIDIA). Este robô compila a versão Vulkan a partir do código oficial,
+# numa tag fixa, e publica o zip numa pré-release deste repositório. O Teka
+# baixa esse zip quando o usuário liga "usar a placa de vídeo" e confere o
+# SHA-256 antes de usar.
+#
+# A release sai como pré-release e sem "latest": o atualizador do Teka lê
+# /releases/latest e não pode confundir este pacote com uma versão do app.
+
+name: whisper.cpp Vulkan (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      whisper_tag:
+        description: 'Tag do whisper.cpp'
+        required: true
+        default: 'v1.9.5'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      WHISPER_TAG: ${{ inputs.whisper_tag }}
+      VULKAN_VERSION: '1.4.363.1'
+    steps:
+      - name: Baixar o whisper.cpp oficial
+        shell: pwsh
+        run: git clone --depth 1 --branch $env:WHISPER_TAG https://github.com/ggml-org/whisper.cpp.git src
+
+      - name: Instalar o Vulkan SDK (só na máquina do robô)
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP\vulkan-sdk.exe"
+          curl.exe -fL -o $exe "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkan-sdk.exe"
+          & $exe --accept-licenses --default-answer --confirm-command install
+          $sdk = "C:\VulkanSDK\$env:VULKAN_VERSION"
+          if (-not (Test-Path "$sdk\Bin\glslc.exe")) { throw "Vulkan SDK sem glslc em $sdk" }
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=$sdk"
+          Add-Content $env:GITHUB_PATH "$sdk\Bin"
+
+      - name: Compilar
+        shell: pwsh
+        working-directory: src
+        run: |
+          # Igual ao pacote oficial de CPU (variantes de CPU como DLL), mais o Vulkan
+          cmake -B build -A x64 `
+            -DBUILD_SHARED_LIBS=ON -DGGML_NATIVE=OFF `
+            -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON `
+            -DGGML_VULKAN=ON `
+            -DWHISPER_BUILD_TESTS=OFF -DWHISPER_SDL2=OFF
+          cmake --build build --config Release -j 4
+
+      - name: Empacotar
+        shell: pwsh
+        run: |
+          $bin = "src\build\bin\Release"
+          if (-not (Test-Path "$bin\whisper-server.exe")) { Get-ChildItem -Recurse src\build -Filter *.exe | Select-Object FullName; throw "whisper-server.exe não saiu do build" }
+          if (-not (Test-Path "$bin\ggml-vulkan.dll")) { throw "ggml-vulkan.dll não saiu do build" }
+          New-Item -ItemType Directory pkg | Out-Null
+          Copy-Item "$bin\*.dll", "$bin\whisper-server.exe", "$bin\whisper-bench.exe", "$bin\whisper-cli.exe" pkg\
+          Copy-Item src\LICENSE pkg\LICENSE-whisper.cpp.txt
+          "whisper.cpp $env:WHISPER_TAG + Vulkan SDK $env:VULKAN_VERSION, compilado por $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" | Set-Content pkg\BUILD-INFO.txt
+          Compress-Archive -Path pkg\* -DestinationPath whisper-vulkan-x64.zip
+          (Get-FileHash whisper-vulkan-x64.zip -Algorithm SHA256).Hash.ToLower() | Tee-Object whisper-vulkan-x64.zip.sha256
+
+      - name: Publicar como pré-release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "whisper-vulkan-$env:WHISPER_TAG"
+          $notes = "whisper.cpp $env:WHISPER_TAG compilado com Vulkan (placas AMD e Intel) para o modo 'usar a placa de vídeo' do Teka. Não é uma versão do app."
+          gh release create $tag whisper-vulkan-x64.zip whisper-vulkan-x64.zip.sha256 --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "whisper.cpp $env:WHISPER_TAG (Vulkan)" --notes $notes --prerelease --latest=false
