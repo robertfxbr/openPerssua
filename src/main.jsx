@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { detectQuestion } from './assist/questionDetector';
-import { leadLine } from './assist/layered';
 import { SuggestedQuestions } from './assist/SuggestedQuestions';
 import { LayeredAnswer } from './assist/LayeredAnswer';
 import { HistoryView } from './history/HistoryView';
@@ -1637,13 +1636,25 @@ function App() {
 
   // ---- modo mini: barra com os comandos do dia a dia + o texto mais recente ----
   // Mostra, nesta ordem: sugestão, análise da tela, resposta, última fala.
+  // ---- modo mini ----
+  // A resposta (sugestão, análise da tela ou pergunta) aparece num painel
+  // neon embaixo da barra; a janela cresce para baixo só enquanto ele existe.
+  const miniCard = suggestion?.text || suggestion?.streaming
+    ? { kind: suggestion.draft && suggestion.streaming ? 'rascunho ao vivo' : 'sugestão', text: suggestion.text, question: suggestion.question, layered: suggestion.layered, streaming: suggestion.streaming, close: () => setSuggestion(null) }
+    : screenResult?.text ? { kind: 'tela', text: screenResult.text, streaming: screenResult.streaming, close: () => setScreenResult(null) }
+      : answer ? { kind: 'resposta', text: answer, streaming: busy, close: () => setAnswer('') }
+        : null;
+  const miniPanelOpen = compact && Boolean(miniCard);
+  useEffect(() => {
+    if (!compact) return;
+    api.overlay.setCompactPanel?.(miniPanelOpen)?.catch(() => {});
+  }, [compact, miniPanelOpen]);
+
   if (compact) {
     const latest = transcript[transcript.length - 1];
-    const card = suggestion?.text ? { kind: 'sugestão', text: suggestion.layered ? leadLine(suggestion.text) : suggestion.text, streaming: suggestion.streaming }
-      : screenResult?.text ? { kind: 'tela', text: screenResult.text, streaming: screenResult.streaming }
-        : answer ? { kind: 'resposta', text: answer, streaming: busy }
-          : null;
+    const card = miniCard;
     return (
+      <div className={`compact-stack ${ghost.clickThrough ? 'passthrough' : ''}`}>
       <div className={`app compact ${ghost.clickThrough ? 'passthrough' : ''}`}>
         {listenNotice}
         {clickThroughNotice}
@@ -1669,12 +1680,7 @@ function App() {
           <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}><EyeOff size={15} /></button>
         </div>
         <div className="compact-body">
-          {card ? (
-            <>
-              <span className="compact-kind">{card.kind}{card.streaming ? '…' : ''}</span>
-              <Markdown className="compact-text" text={card.text} />
-            </>
-          ) : latest ? (
+          {latest ? (
             <div className="compact-text dim"><b>{latest.source === 'mic' ? 'Você' : 'Reunião'}:</b> {latest.text}</div>
           ) : (
             <div className="compact-text dim">
@@ -1694,6 +1700,22 @@ function App() {
             {busy ? <LoaderCircle size={14} className="spin" /> : <ArrowUp size={15} strokeWidth={2.4} />}
           </button>
         </div>
+      </div>
+      {card && (
+        <div className="compact-answer" role="region" aria-label={card.kind}>
+          <div className="compact-answer-head">
+            <span className="compact-kind"><Sparkles size={11} /> {card.kind}{card.streaming ? '…' : ''}</span>
+            <button className="mini-link" onClick={() => copyText(card.text)} disabled={!card.text}>copiar</button>
+            <button className="mini-link" title="Fechar" onClick={card.close}>✕</button>
+          </div>
+          <div className="compact-answer-body">
+            {card.question && <div className="sug-question">“{card.question}”</div>}
+            {!card.text
+              ? <div className="compact-text dim">pensando…</div>
+              : card.layered ? <LayeredAnswer text={card.text} /> : <Markdown className="compact-text" text={card.text} />}
+          </div>
+        </div>
+      )}
       </div>
     );
   }

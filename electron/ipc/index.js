@@ -1,7 +1,7 @@
 // Registro central de handlers IPC — 1 domínio por bloco.
 // Os nomes de canais seguem o padrão observado no original (domínio:ação).
 
-const { ipcMain, app, clipboard, shell, safeStorage } = require('electron');
+const { ipcMain, app, clipboard, shell, safeStorage, screen } = require('electron');
 const { registerMcpIpc } = require('../mcp/ipc');
 const path = require('path');
 const fs = require('fs');
@@ -68,17 +68,24 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   ipcMain.handle('overlay:set-click-through', (_e, enabled) => setClickThrough(Boolean(enabled)));
   // Modo mini: reduz a janela para uma pílula; guarda o tamanho anterior p/ voltar
   let savedBounds = null;
+  let compactOn = false;
+  // Mini: barra de 420×210. Com resposta, a janela cresce para baixo e mostra
+  // o painel da resposta embaixo da barra (até onde a tela deixar).
+  const MINI_WIDTH = 420;
+  const MINI_HEIGHT = 210;
+  const MINI_PANEL = 330;
   ipcMain.handle('overlay:set-compact', (_e, compact) => {
     const win = getOverlayWindow();
     if (!win || win.isDestroyed()) return { ok: false, error: 'janela indisponível' };
     try {
       setCompactMode(compact);
+      compactOn = Boolean(compact);
       if (compact) {
         savedBounds = win.getBounds();
         // setBounds (x,y preservados) — mais confiável que setSize em janela
         // transparente/frameless no Windows
         win.setResizable(true);
-        win.setBounds({ x: savedBounds.x, y: savedBounds.y, width: 420, height: 210 });
+        win.setBounds({ x: savedBounds.x, y: savedBounds.y, width: MINI_WIDTH, height: MINI_HEIGHT });
       } else {
         win.setBounds({
           x: savedBounds?.x ?? win.getBounds().x,
@@ -93,6 +100,21 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
     } catch (err) {
       return { ok: false, error: String(err.message || err) };
     }
+  });
+
+  ipcMain.handle('overlay:set-compact-panel', (_e, open) => {
+    const win = getOverlayWindow();
+    if (!win || win.isDestroyed() || !compactOn) return { ok: false };
+    const b = win.getBounds();
+    const area = screen.getDisplayMatching(b).workArea;
+    const want = open ? MINI_HEIGHT + MINI_PANEL : MINI_HEIGHT;
+    // cresce só para baixo (a barra não sai do lugar) e para na borda da tela
+    const height = Math.max(MINI_HEIGHT, Math.min(want, area.y + area.height - b.y));
+    if (height !== b.height) {
+      win.setBounds({ x: b.x, y: b.y, width: b.width, height });
+      repaintOverlay(win);
+    }
+    return { ok: true, height };
   });
 
   // ---- multi-monitor ----

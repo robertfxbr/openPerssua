@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('teka', {
     setGhost: (patch) => invoke('overlay:set-ghost', patch),
     onGhostChanged: (cb) => on('overlay:ghost-changed', cb),
     setCompact: (compact) => invoke('overlay:set-compact', compact),
+    setCompactPanel: (open) => invoke('overlay:set-compact-panel', open),
     onAssistTrigger: (cb) => on('overlay:assist-trigger', cb),
     onCopySuggestion: (cb) => on('overlay:copy-suggestion', cb),
     onToggleListen: (cb) => on('overlay:toggle-listen', cb),
