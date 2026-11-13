@@ -1,7 +1,7 @@
 {
   "name": "teka",
   "productName": "Teka",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Open-source desktop AI meeting copilot overlay. Works with the LLM you already have, no extra API bill: ChatGPT login, Claude Code CLI, Codex CLI, Gemini CLI, Ollama or a local server (paid APIs optional). Portfolio reimplementation based on public behavior analysis.",
   "license": "MIT",
   "main": "electron/bootstrap.js",
@@ -79,7 +79,9 @@
     "url": "https://github.com/robertfxbr"
   },
   "homepage": "https://github.com/robertfxbr/openPerssua",
-  "contributors": ["OpenAI Codex (contribuição assistida por IA)"],
+  "contributors": [
+    "OpenAI Codex (contribuição assistida por IA)"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/robertfxbr/openPerssua.git"
