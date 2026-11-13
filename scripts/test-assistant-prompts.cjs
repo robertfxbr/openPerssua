@@ -11,3 +11,13 @@ for (const mode of ['chat', 'screen', 'assist', 'questions', 'summary', 'email']
   assert.ok(messages[1].content.includes('&lt;/contexto_do_assistente&gt;'), mode);
 }
 console.log('PASS: contexto delimitado como dado em todos os usos');
+
+for (const mode of ['chat', 'screen', 'assist']) {
+  const req = { mode, image: 'imagem', certainOnly: true, assistMode: 'interview', profile: 'Experiência real' };
+  const messages = buildMessages(req);
+  assert.match(messages[0].content, /Não tenho base para responder/);
+  assert.match(messages[0].content, /como descobriria/);
+  assert.match(messages[1].content, /Experiência real/);
+  assert.ok(!buildMessages({ ...req, certainOnly: false })[0].content.includes('Não tenho base para responder'));
+}
+console.log('PASS: certeza opcional em resposta, tela e ao vivo, com perfil global');

@@ -182,6 +182,7 @@ function App() {
   const [assistantId, setAssistantId] = useState('padrao');
   const [customAssistants, setCustomAssistants] = useState([]);
   const [assistantContexts, setAssistantContexts] = useState({});
+  const [assistantPreferences, setAssistantPreferences] = useState({});
   const [compactEnabled, setCompactEnabled] = useState(true);
   const [memory, setMemory] = useState('');
   const [translate, setTranslate] = useState(DEFAULT_TRANSLATE);
@@ -240,6 +241,7 @@ function App() {
   const echoFilterRef = useRef(echoFilter);
   const noiseRef = useRef(noiseSuppression);
   const sttFastRef = useRef(sttFast);
+  const assistantPreferencesRef = useRef({});
   const assistantContextRef = useRef('');
   const assistantRef = useRef('');       // instruções do assistente escolhido
   const summaryCtxRef = useRef(null);    // { dbId, transcript, memory } da última sessão encerrada
@@ -261,8 +263,9 @@ function App() {
   useEffect(() => { sttFastRef.current = sttFast; }, [sttFast]);
   useEffect(() => {
     assistantRef.current = findAssistant(assistantId, customAssistants).instructions || '';
+    assistantPreferencesRef.current = assistantPreferences[assistantId] || {};
     assistantContextRef.current = contextToText(assistantContexts[assistantId]);
-  }, [assistantId, customAssistants, assistantContexts]);
+  }, [assistantId, customAssistants, assistantContexts, assistantPreferences]);
 
   useEffect(() => {
     refreshProviders();
@@ -300,10 +303,13 @@ function App() {
     api.settings.get('translate.config').then((t) => t && setTranslate({ ...DEFAULT_TRANSLATE, ...t }));
     api.settings.getAll().then((all) => {
       const contexts = {};
+      const preferences = {};
       for (const [key, value] of Object.entries(all)) {
+        if (key.startsWith('assistant.preferences.')) preferences[key.slice(22)] = { certainOnly: value?.certainOnly === true };
         if (key.startsWith('assistant.context.')) contexts[key.slice(18)] = normalizeContext(value);
       }
       setAssistantContexts(contexts);
+      setAssistantPreferences(preferences);
     }).catch((e) => setError(`contextos: ${e.message}`));
     api.settings.get('assistants.custom').then((list) => Array.isArray(list) && setCustomAssistants(list));
     api.settings.get('assistants.active').then((id) => id && setAssistantId(id));
@@ -508,6 +514,12 @@ function App() {
     if (a.mode) changeAssistMode(a.mode);
   }
 
+  function saveAssistantPreferences(id, value) {
+    const preferences = { certainOnly: value?.certainOnly === true };
+    setAssistantPreferences((all) => ({ ...all, [id]: preferences }));
+    return api.settings.set(`assistant.preferences.${id}`, preferences).catch((e) => setError(`assistente: ${e.message}`));
+  }
+
   function saveAssistantContext(id, value) {
     const context = normalizeContext(value);
     setAssistantContexts((all) => ({ ...all, [id]: context }));
@@ -516,6 +528,8 @@ function App() {
 
   function saveCustomAssistants(list) {
     for (const a of customAssistants.filter((a) => !list.some((n) => n.id === a.id))) {
+      api.settings.delete(`assistant.preferences.${a.id}`).catch((e) => setError(`assistente: ${e.message}`));
+      setAssistantPreferences((all) => { const next = { ...all }; delete next[a.id]; return next; });
       api.settings.delete(`assistant.context.${a.id}`).catch((e) => setError(`contexto: ${e.message}`));
       setAssistantContexts((all) => { const next = { ...all }; delete next[a.id]; return next; });
     }
@@ -862,6 +876,7 @@ function App() {
         ...liveContext(layered ? INTERVIEW_CONTEXT_LINES : ASSIST_CONTEXT_LINES),
         assistant: assistantRef.current || undefined,
         assistantContext: assistantContextRef.current || undefined,
+        certainOnly: assistantPreferencesRef.current.certainOnly === true,
         assistMode: assistModeRef.current,
         profile: profileRef.current,
         instruction,
@@ -911,6 +926,7 @@ function App() {
       const text = await api.llm.chat({
         mode: 'summary',
         assistantContext: assistantContextRef.current || undefined,
+        certainOnly: assistantPreferencesRef.current.certainOnly === true,
         summaryKind: interview ? 'interview' : undefined,
         profile: interview ? profileRef.current : undefined,
         transcript: ctx.transcript,
@@ -940,6 +956,7 @@ function App() {
         summary: summary?.text || undefined,
         assistant: assistantRef.current || undefined,
         assistantContext: assistantContextRef.current || undefined,
+        certainOnly: assistantPreferencesRef.current.certainOnly === true,
         model: llmModelRef.current || undefined,
       });
       setFollowup({ text, streaming: false });
@@ -1206,7 +1223,10 @@ function App() {
         ...liveContext(),
         assistant: assistantRef.current || undefined,
         assistantContext: assistantContextRef.current || undefined,
+        certainOnly: assistantPreferencesRef.current.certainOnly === true,
         context: context || undefined,
+        profile: profileRef.current,
+        assistMode: assistModeRef.current,
         model: llmModelRef.current || undefined,
       });
       askStreamIdRef.current = streamId;
@@ -1281,7 +1301,9 @@ function App() {
         ...liveContext(),
         assistant: assistantRef.current || undefined,
         assistantContext: assistantContextRef.current || undefined,
+        certainOnly: assistantPreferencesRef.current.certainOnly === true,
         profile: profileRef.current,
+        assistMode: assistModeRef.current,
         model: llmModelRef.current || undefined,
       });
       await done;
@@ -1462,6 +1484,8 @@ function App() {
               custom={customAssistants}
               onSelect={selectAssistant}
               onCustomChange={saveCustomAssistants}
+              preferences={assistantPreferences}
+              onPreferencesChange={saveAssistantPreferences}
               contexts={assistantContexts}
               onContextChange={saveAssistantContext}
             />

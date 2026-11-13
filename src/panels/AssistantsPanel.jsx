@@ -7,7 +7,7 @@ const MAX_INSTRUCTIONS = 4000;
 
 // Aba "assistentes": escolher um pronto, duplicar para ajustar ou criar um
 // do zero. Os prontos não são editáveis para sempre haver um ponto de volta.
-export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, contexts, onContextChange }) {
+export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, contexts, onContextChange, preferences, onPreferencesChange }) {
   const [contextId, setContextId] = useState(null);
   const [editing, setEditing] = useState(null); // { id, name, mode, instructions, isNew }
 
@@ -18,6 +18,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
       mode: base?.mode || 'meeting',
       instructions: base?.instructions || '',
       contextCopy: base ? contexts[base.id] : undefined,
+      preferencesCopy: base ? preferences[base.id] : undefined,
       isNew: true,
     });
   }
@@ -35,6 +36,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
       ? [...custom, item]
       : custom.map((a) => (a.id === item.id ? item : a));
     onCustomChange(next);
+    if (editing.preferencesCopy) onPreferencesChange(item.id, editing.preferencesCopy);
     if (editing.contextCopy) onContextChange(item.id, editing.contextCopy);
     if (editing.isNew) onSelect(item.id);
     setEditing(null);
@@ -100,7 +102,12 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
           </>
         )}
     </div>
-    {contextId === a.id && <AssistantContextEditor key={a.id} value={contexts[a.id]} onChange={(value) => onContextChange(a.id, value)} />}
+    {contextId === a.id && <div className="assistant-context">
+      <label className="option-label"><input type="checkbox" checked={preferences[a.id]?.certainOnly === true}
+        onChange={(e) => onPreferencesChange(a.id, { certainOnly: e.target.checked })} /> Responder só com certeza</label>
+      <div className="panel-note">Usa apenas a transcrição e os contextos. Se faltar base, avisa.</div>
+      <AssistantContextEditor key={a.id} value={contexts[a.id]} onChange={(value) => onContextChange(a.id, value)} />
+    </div>}
     </React.Fragment>
   );
 
