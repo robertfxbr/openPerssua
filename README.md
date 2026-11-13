@@ -150,6 +150,42 @@ Pré-requisitos conforme o provedor escolhido:
 - Gemini CLI: `gemini` instalado; rode `gemini` uma vez para entrar com a conta Google.
 - Ollama: servidor em `http://127.0.0.1:11434`.
 
+## Ferramentas MCP
+
+Em **Configurações → ferramentas**, cadastre um comando local (stdio) ou
+uma URL Streamable HTTP. Argumentos usam um array JSON; ambiente e cabeçalhos
+usam objetos JSON. Também é possível colar ou escolher um arquivo no formato
+`{"mcpServers": {...}}` usado por Claude Desktop, Claude Code e Cursor.
+Os servidores novos/importados começam desligados: ligue e teste para listar
+suas ferramentas. Instale o runtime do comando, como Node/npx ou uv/uvx, no PC.
+
+Cada ferramenta começa em **pedir confirmação**: o Teka mostra seu nome e
+argumentos e só chama após permitir. Sem resposta em até 45 segundos, nega.
+Você pode trocar para **automático** ou **desligada**. Em **assistentes**,
+abra o contexto ou editor e selecione os servidores permitidos; nenhum vem
+selecionado. As três instruções opcionais complementam escolha, resumo do
+resultado e próximo passo. O export de assistentes leva essas instruções,
+mas não leva servidores, permissões locais, ambiente ou cabeçalhos.
+
+Funciona pelo provedor escolhido para resposta/tela, sem exigir tool calling
+nativo. Só perguntas manuais e sobre a tela consultam MCP; sugestões ao vivo
+não consultam. Há até 3 chamadas em 60 segundos de preparação (incluindo
+confirmações), conexão de até 10 s por etapa e chamada de até 20 s. Depois,
+o Teka responde com o que conseguiu e indica as ferramentas usadas. O resultado
+enviado ao modelo fica limitado a 12.000 caracteres por chamada. Essas etapas
+adicionam chamadas ao provedor e podem consumir sua cota/cobrança habitual.
+
+Ambiente e cabeçalhos são cifrados com `safeStorage` do sistema; se a cifra
+não estiver disponível, o Teka recusa salvar segredos. Cadastre só servidores
+que você confia: comandos locais executam com seu usuário e ferramentas podem
+ler ou alterar dados conforme suas permissões. OAuth de servidores MCP,
+prompts, resources e sampling não são suportados.
+
+Verificação local, sem modelos reais: `npm run build`, `npm run test:mcp` e
+`npm run test:assistants` (inclui renderer compilado, preload, confirmação e
+cifra real do sistema em uma instância de teste com dados temporários).
+Os transportes seguem a [especificação MCP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports).
+
 ## Estrutura
 
 ```
