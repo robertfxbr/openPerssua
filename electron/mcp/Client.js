@@ -48,7 +48,13 @@ class McpClient {
   startChild() {
     if (this.child) return;
     this.stderr = '';
-    const child = spawnCommand(this.config.command, this.config.args || [], { ...process.env, ...this.config.env });
+    const environment = new Map();
+    for (const [key, value] of Object.entries({ ...process.env, ...this.config.env })) {
+      // No Windows, PATH e Path são a mesma variável; a opção do usuário vence.
+      const canonical = process.platform === 'win32' ? key.toUpperCase() : key;
+      environment.set(canonical, value);
+    }
+    const child = spawnCommand(this.config.command, this.config.args || [], Object.fromEntries(environment));
     this.child = child;
     const decoder = new StringDecoder('utf8'); let buffer = '';
     child.stdout.on('data', chunk => {

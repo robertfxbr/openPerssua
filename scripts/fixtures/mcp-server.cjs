@@ -7,10 +7,11 @@ const tools = [
 ];
 let initialized = false;
 async function reply(msg) {
+  if (msg.method === 'initialize' && process.argv.includes('--hang-initialize')) await new Promise(r => setTimeout(r, 5000));
   if (msg.method === 'notifications/initialized') { initialized = true; return; }
   if (msg.id === undefined) return;
   let result;
-  if (msg.method === 'initialize') result = { protocolVersion: msg.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'teste', version: '1' } };
+  if (msg.method === 'initialize') result = { protocolVersion: process.argv.includes('--invalid-version') ? '2099-01-01' : msg.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'teste', version: '1' } };
   else if (!initialized) return { jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'Sem inicialização' } };
   else if (msg.method === 'tools/list') result = msg.params?.cursor ? { tools: tools.slice(1) } : { tools: tools.slice(0, 1), nextCursor: 'segunda' };
   else if (msg.method === 'tools/call') {

@@ -18,6 +18,10 @@ async function exercise(client) {
 }
 (async () => {
   const config = { type: 'stdio', command: process.execPath, args: [fixture] };
+  const stalled = new McpClient({ ...config, args: [fixture, '--hang-initialize'] }, { connectTimeout: 100 });
+  try { await assert.rejects(stalled.connect(), /tempo/i); } finally { stalled.close(); }
+  const incompatible = new McpClient({ ...config, args: [fixture, '--invalid-version'] });
+  try { await assert.rejects(incompatible.connect(), /versão/i); } finally { incompatible.close(); }
   await exercise(new McpClient(config));
   const childClient = new McpClient(config);
   try {
@@ -34,6 +38,14 @@ async function exercise(client) {
     fs.writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${fixture}" %*\r\n`);
     try { await exercise(new McpClient({ type: 'stdio', command: shim, args: ['argumento com espaço'] })); }
     finally { fs.rmSync(temp, { recursive: true, force: true }); }
+    // Shims com os nomes reais exercitam o mesmo caminho de npx/uvx sem rede.
+    const shims = fs.mkdtempSync(path.join(os.tmpdir(), 'teka-mcp-shims-'));
+    try {
+      for (const command of ['npx', 'uvx']) {
+        fs.writeFileSync(path.join(shims, `${command}.cmd`), `@echo off\r\n"${process.execPath}" "${fixture}" %*\r\n`);
+        await exercise(new McpClient({ type: 'stdio', command, args: ['argumento com espaço'], env: { Path: `${shims};${process.env.Path || process.env.PATH}` } }));
+      }
+    } finally { fs.rmSync(shims, { recursive: true, force: true }); }
   }
   const server = spawn(process.execPath, [fixture, '--http'], { env: { ...process.env, MCP_TEST_TOKEN: 'Bearer teste' }, windowsHide: true });
   server.stderr.resume();
