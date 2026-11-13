@@ -21,6 +21,13 @@ import { createListenReminder } from './audio/listenReminder.mjs';
 import { findEcho, ECHO_WINDOW_MS } from './audio/echo';
 import { formatClock } from './util/time';
 import { prettyAccelerator } from './util/accelerator';
+import {
+  History, Settings2, Minimize2, Maximize2, EyeOff, Mic, Square, LoaderCircle, Sparkles, Camera,
+  ClipboardPaste, ArrowUp, Zap, IdCard, ChevronDown, ChevronUp, Mail, X, Copy,
+} from 'lucide-react';
+import '@fontsource-variable/bricolage-grotesque';
+import { Markdown } from './ui/Markdown';
+import { TekaMark } from './ui/TekaMark';
 import './styles.css';
 
 const api = window.teka;
@@ -92,13 +99,16 @@ const WHISPER_MODELS = [
   ['ggml-small.bin', 'Small — bem mais preciso em PT-BR (466 MB) · recomendado'],
 ];
 
+// Acentos do tema. a = cor principal (marca, botões, você), b = segunda cor
+// (respostas da IA). No modo claro as duas escurecem para manter contraste.
+// "teka" é a identidade padrão: lima sobre grafite, com pêssego nas respostas.
 const ACCENTS = {
-  aurora: { a: '#2fe0b0', b: '#8b7cf6', aSoft: 'rgba(47,224,176,0.16)', bSoft: 'rgba(139,124,246,0.14)' },
-  oceano: { a: '#38bdf8', b: '#818cf8', aSoft: 'rgba(56,189,248,0.16)', bSoft: 'rgba(129,140,248,0.14)' },
-  ambar: { a: '#fbbf24', b: '#fb7185', aSoft: 'rgba(251,191,36,0.16)', bSoft: 'rgba(251,113,133,0.14)' },
+  teka: { a: '#c5ef6b', b: '#ffb38a', aLight: '#5d8a10', bLight: '#b4551f' },
+  oceano: { a: '#5cc8ff', b: '#a99bff', aLight: '#0f6fa3', bLight: '#5b49c9' },
+  ambar: { a: '#ffcb52', b: '#ff8fa3', aLight: '#9a6a00', bLight: '#b8324c' },
 };
 
-const DEFAULT_THEME = { mode: 'dark', accent: 'aurora', opacity: 0.95, fontScale: 1 };
+const DEFAULT_THEME = { mode: 'dark', accent: 'teka', opacity: 0.96, fontScale: 1 };
 
 // Modelos aceitos pelo backend Codex com conta ChatGPT (vazio = padrão)
 const MODEL_OPTIONS = [
@@ -110,25 +120,28 @@ const MODEL_OPTIONS = [
 
 function applyTheme(t) {
   const root = document.documentElement;
-  const acc = ACCENTS[t.accent] || ACCENTS.aurora;
-  root.style.setProperty('--mint', acc.a);
-  root.style.setProperty('--lilac', acc.b);
-  root.style.setProperty('--mint-soft', acc.aSoft);
-  root.style.setProperty('--lilac-soft', acc.bSoft);
-  if (t.mode === 'light') {
-    root.style.setProperty('--bg', `rgba(244, 245, 250, ${t.opacity})`);
-    root.style.setProperty('--text', '#17181f');
-    root.style.setProperty('--text-dim', '#5c606e');
-    root.style.setProperty('--surface', 'rgba(15, 15, 25, 0.05)');
-    root.style.setProperty('--surface-hover', 'rgba(15, 15, 25, 0.1)');
-    root.style.setProperty('--border', 'rgba(15, 15, 25, 0.12)');
+  // acento salvo de versões antigas (ex.: "aurora") cai na identidade padrão
+  const acc = ACCENTS[t.accent] || ACCENTS.teka;
+  const light = t.mode === 'light';
+  root.dataset.theme = light ? 'light' : 'dark';
+  root.style.setProperty('--mint', light ? acc.aLight : acc.a);
+  root.style.setProperty('--lilac', light ? acc.bLight : acc.b);
+  // texto sobre a cor principal: escuro no tema escuro, claro no tema claro
+  root.style.setProperty('--accent-ink', light ? '#fbfaf6' : '#161a0c');
+  if (light) {
+    root.style.setProperty('--bg', `rgba(247, 245, 240, ${t.opacity})`);
+    root.style.setProperty('--text', '#1b1a17');
+    root.style.setProperty('--text-dim', '#6b675f');
+    root.style.setProperty('--surface', 'rgba(40, 32, 20, 0.05)');
+    root.style.setProperty('--surface-hover', 'rgba(40, 32, 20, 0.09)');
+    root.style.setProperty('--border', 'rgba(40, 32, 20, 0.12)');
   } else {
-    root.style.setProperty('--bg', `rgba(19, 17, 26, ${t.opacity})`);
-    root.style.setProperty('--text', '#eef0f6');
-    root.style.setProperty('--text-dim', '#989ca8');
-    root.style.setProperty('--surface', 'rgba(255, 255, 255, 0.055)');
-    root.style.setProperty('--surface-hover', 'rgba(255, 255, 255, 0.1)');
-    root.style.setProperty('--border', 'rgba(255, 255, 255, 0.08)');
+    root.style.setProperty('--bg', `rgba(22, 21, 19, ${t.opacity})`);
+    root.style.setProperty('--text', '#f1efe9');
+    root.style.setProperty('--text-dim', '#a29e94');
+    root.style.setProperty('--surface', 'rgba(255, 250, 240, 0.05)');
+    root.style.setProperty('--surface-hover', 'rgba(255, 250, 240, 0.09)');
+    root.style.setProperty('--border', 'rgba(255, 250, 240, 0.09)');
   }
   document.body.style.fontSize = `${14 * t.fontScale}px`;
 }
@@ -1463,31 +1476,60 @@ function App() {
     <button className="mini-link" onClick={() => toggleListening({ pause: true })}>pausar agora</button>
   </div> : null;
 
-  // ---- modo mini: pílula com status + última sugestão ----
+  // ---- modo mini: barra com os comandos do dia a dia + o texto mais recente ----
+  // Mostra, nesta ordem: sugestão, análise da tela, resposta, última fala.
   if (compact) {
+    const latest = transcript[transcript.length - 1];
+    const card = suggestion?.text ? { kind: 'sugestão', text: suggestion.layered ? leadLine(suggestion.text) : suggestion.text, streaming: suggestion.streaming }
+      : screenResult?.text ? { kind: 'tela', text: screenResult.text, streaming: screenResult.streaming }
+        : answer ? { kind: 'resposta', text: answer, streaming: busy }
+          : null;
     return (
       <div className="app compact">
         {listenNotice}
         <div className="compact-bar">
-          <button className="icon-btn" title="Expandir" onClick={toggleCompact}>▢</button>
-          <span className={`status-dot ${listening ? 'on' : ''}`} />
-          {listening && <span className="compact-timer">{formatClock(elapsedMs)}</span>}
-          <div className="compact-text">
-            {suggestion?.text
-              ? (suggestion.layered ? leadLine(suggestion.text) : suggestion.text).slice(0, 140)
-              : listening ? 'ouvindo…' : 'Teka'}
-            {suggestion?.streaming && <span className="caret">▌</span>}
-          </div>
-          {suggestion?.text && (
-            <button
-              className="icon-btn"
-              title="Copiar sugestão"
-              onClick={() => copyText(suggestion.text)}
-            >
-              ⧉
-            </button>
+          <TekaMark size={18} />
+          <button
+            className={`compact-mic ${listening ? 'on' : ''}`}
+            onClick={toggleListening}
+            disabled={starting}
+            title={`${listening ? 'Parar' : 'Iniciar'} escuta (${hintKey('toggle-listen')})`}
+          >
+            {starting ? <LoaderCircle size={14} className="spin" /> : listening ? <Square size={11} fill="currentColor" /> : <Mic size={14} />}
+            <span>{starting ? 'preparando' : listening ? formatClock(elapsedMs) : 'ouvir'}</span>
+          </button>
+          <div className="compact-spacer" />
+          <button className="icon-btn" title={`Sugerir o que dizer agora (${hintKey('assist')})`} onClick={() => runAssist(lastQuestionRef.current || '')} disabled={busy || suggestion?.streaming}><Sparkles size={15} /></button>
+          <button className="icon-btn" title={`Analisar a tela (${hintKey('screenshot')})`} onClick={runScreenAnalysis} disabled={Boolean(screenResult?.streaming)}><Camera size={15} /></button>
+          <button className="icon-btn" title="Copiar o texto abaixo" onClick={() => card && copyText(card.text)} disabled={!card?.text}><Copy size={15} /></button>
+          <button className="icon-btn" title="Voltar à janela completa" onClick={toggleCompact}><Maximize2 size={15} /></button>
+          <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}><EyeOff size={15} /></button>
+        </div>
+        <div className="compact-body">
+          {card ? (
+            <>
+              <span className="compact-kind">{card.kind}{card.streaming ? '…' : ''}</span>
+              <Markdown className="compact-text" text={card.text} />
+            </>
+          ) : latest ? (
+            <div className="compact-text dim"><b>{latest.source === 'mic' ? 'Você' : 'Reunião'}:</b> {latest.text}</div>
+          ) : (
+            <div className="compact-text dim">
+              {listening ? 'Ouvindo. As falas e sugestões aparecem aqui.' : 'Toque em ouvir para começar, ou pergunte abaixo.'}
+            </div>
           )}
-          <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}>—</button>
+          {error && <div className="compact-error">{error}</div>}
+        </div>
+        <div className="compact-ask">
+          <input
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && ask()}
+            placeholder="Pergunte rápido…"
+          />
+          <button className="send-btn" onClick={ask} disabled={busy || !question.trim()} title="Enviar">
+            {busy ? <LoaderCircle size={14} className="spin" /> : <ArrowUp size={15} strokeWidth={2.4} />}
+          </button>
         </div>
       </div>
     );
@@ -1517,17 +1559,17 @@ function App() {
     <div className="app">
       <div className="header">
         <div className="logo">
-          <div className="logo-mark">◆</div>
-          <span className="logo-name">Teka</span>
+          <TekaMark size={24} />
+          <span className="logo-name">teka</span>
         </div>
         <div className={`status-pill ${listening ? 'on' : ''}`} title={resumeTarget ? `continuando: ${resumeTarget.subject || 'sessão anterior'}` : undefined}>
           <span className="dot" />
           {listening ? `ouvindo · ${formatClock(elapsedMs)}` : 'parado'}
         </div>
-        <button className="icon-btn" title="Histórico de sessões" onClick={openHistory}>🕘</button>
-        <button className={`icon-btn ${showTheme ? 'active' : ''}`} title="Configurações" onClick={() => setShowTheme(!showTheme)}>⚙</button>
-        <button className="icon-btn" title="Modo mini" onClick={toggleCompact}>▂</button>
-        <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}>—</button>
+        <button className="icon-btn" title="Histórico de sessões" onClick={openHistory}><History size={16} /></button>
+        <button className={`icon-btn ${showTheme ? 'active' : ''}`} title="Configurações" onClick={() => setShowTheme(!showTheme)}><Settings2 size={16} /></button>
+        <button className="icon-btn" title="Modo mini" onClick={toggleCompact}><Minimize2 size={16} /></button>
+        <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}><EyeOff size={16} /></button>
       </div>
 
       {listenNotice}
@@ -1679,18 +1721,19 @@ function App() {
             ))}
           </select>
         </div>
+        {provider === 'chatgpt-oauth' && chatGptAuthed && (
+          <span className="auth-badge" title="ChatGPT conectado">
+            <span className="dot" />conectado
+            <button className="auth-link" onClick={logoutChatGpt} title="Desconectar o ChatGPT">sair</button>
+          </span>
+        )}
       </div>
 
       {provider === 'chatgpt-oauth' && (
-        chatGptAuthed ? (
-          <div className="auth-row">
-            <span className="auth-pill ok">✓ ChatGPT conectado</span>
-            <button className="auth-link" onClick={logoutChatGpt}>sair</button>
-          </div>
-        ) : (
+        chatGptAuthed ? null : (
           <div className="auth-row">
             <button className="login-btn" onClick={startChatGptLogin} disabled={authBusy}>
-              {authBusy ? 'aguardando autorização no navegador…' : '⬡ Entrar com ChatGPT'}
+              {authBusy ? 'aguardando autorização no navegador…' : 'Entrar com ChatGPT'}
             </button>
           </div>
         )
@@ -1713,7 +1756,7 @@ function App() {
           onClick={toggleAutoAssist}
           title="Sugerir resposta automaticamente quando detectar uma pergunta"
         >
-          ⚡ auto
+          <Zap size={13} strokeWidth={2.4} /> auto
         </button>
       </div>
 
@@ -1721,12 +1764,12 @@ function App() {
         <div className="select-wrap small" title="Assistente: junta modo e instruções de foco (Configurações → assistentes)">
           <select value={assistantId} onChange={(e) => selectAssistant(e.target.value)}>
             {[...BUILTIN_ASSISTANTS, ...customAssistants].map((a) => (
-              <option key={a.id} value={a.id}>🧩 {a.name}</option>
+              <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
         </div>
         <button className="profile-toggle" onClick={() => setShowProfile(!showProfile)}>
-          🎯 meu contexto {showProfile ? '▴' : '▾'}
+          <IdCard size={14} /> meu contexto {showProfile ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
         {profile.trim() && !showProfile && <span className="profile-dot" title="Contexto preenchido" />}
       </div>
@@ -1746,14 +1789,14 @@ function App() {
         />
       )}
 
-      <div className="hero">
+      <div className={`hero ${transcript.length || answer || suggestion || summary || screenResult ? 'tight' : ''}`}>
         <button
           className={`mic-hero ${listening ? 'listening' : ''}`}
           onClick={toggleListening}
           disabled={starting}
           title={`${listening ? 'Parar' : 'Iniciar'} escuta (${hintKey('toggle-listen')})`}
         >
-          {starting ? '⏳' : listening ? '⏹' : '🎙'}
+          {starting ? <LoaderCircle size={24} className="spin" /> : listening ? <Square size={20} fill="currentColor" /> : <Mic size={26} />}
         </button>
         {listening ? (
           <>
@@ -1832,14 +1875,14 @@ function App() {
       {summary && (
         <div className="summary">
           <div className="sug-head">
-            <span className="label">✦ resumo da sessão{summary.streaming ? '…' : ''}</span>
+            <span className="label"><Sparkles size={12} /> resumo da sessão{summary.streaming ? '…' : ''}</span>
             <div className="sug-actions">
               <button
                 onClick={generateFollowup}
                 disabled={summary.streaming || followup?.streaming}
                 title="Escrever o e-mail de follow-up desta reunião"
               >
-                ✉ e-mail
+                <Mail size={13} /> e-mail
               </button>
               <button
                 onClick={() => copyText(summary.text)}
@@ -1851,20 +1894,20 @@ function App() {
               <button onClick={() => setSummary(null)} title="Dispensar">✕</button>
             </div>
           </div>
-          <div className="sug-text">{summary.text || 'gerando resumo…'}</div>
+          {summary.text ? <Markdown className="sug-text" text={summary.text} /> : <div className="sug-text">gerando resumo…</div>}
         </div>
       )}
 
       {followup && (
         <div className="summary">
           <div className="sug-head">
-            <span className="label">✉ e-mail de follow-up{followup.streaming ? '…' : ''}</span>
+            <span className="label"><Mail size={12} /> e-mail de follow-up{followup.streaming ? '…' : ''}</span>
             <div className="sug-actions">
               <button onClick={() => copyText(followup.text)} disabled={!followup.text} title="Copiar e-mail">copiar</button>
               <button onClick={() => setFollowup(null)} title="Dispensar">✕</button>
             </div>
           </div>
-          <div className="sug-text">{followup.text || 'escrevendo…'}</div>
+          {followup.text ? <Markdown className="sug-text" text={followup.text} /> : <div className="sug-text">escrevendo…</div>}
         </div>
       )}
 
@@ -1872,7 +1915,7 @@ function App() {
         <div className="suggestion">
           <div className="sug-head">
             <span className="label">
-              ✦ {suggestion.draft && suggestion.streaming ? 'rascunho ao vivo' : 'sugestão'}
+              <Sparkles size={12} /> {suggestion.draft && suggestion.streaming ? 'rascunho ao vivo' : 'sugestão'}
               {suggestion.streaming ? '…' : ''}
             </span>
             <div className="sug-actions">
@@ -1889,7 +1932,7 @@ function App() {
           {suggestion.question && <div className="sug-question">“{suggestion.question}”</div>}
           {suggestion.layered
             ? <LayeredAnswer text={suggestion.text} />
-            : <div className="sug-text">{suggestion.text || 'pensando…'}</div>}
+            : suggestion.text ? <Markdown className="sug-text" text={suggestion.text} /> : <div className="sug-text">pensando…</div>}
           {!suggestion.streaming && suggestion.text && (
             <div className="sug-chips">
               {(suggestion.layered ? INTERVIEW_REFINE_CHIPS : REFINE_CHIPS).map(([label, instruction]) => (
@@ -1910,7 +1953,7 @@ function App() {
         <div className="suggestion screen-card">
           <div className="sug-head">
             <span className="label">
-              ✦ análise da tela{screenResult.streaming ? '…' : ''}
+              <Camera size={12} /> análise da tela{screenResult.streaming ? '…' : ''}
             </span>
             <div className="sug-actions">
               <button
@@ -1928,9 +1971,9 @@ function App() {
           )}
           {screenResult.question && <div className="sug-question">“{screenResult.question}”</div>}
           {!!screenTools.length && <div className="mcp-used">Ferramentas: {screenTools.map(t => `${t.serverName || 'MCP'} · ${t.name}${t.isError ? ' (erro)' : ''}`).join(', ')}</div>}
-          <div className="sug-text">
-            {screenResult.text || (screenResult.capturing ? 'capturando a tela…' : 'analisando…')}
-          </div>
+          {screenResult.text
+            ? <Markdown className="sug-text" text={screenResult.text} />
+            : <div className="sug-text">{screenResult.capturing ? 'capturando a tela…' : 'analisando…'}</div>}
           {!screenResult.streaming && <SuggestedQuestions key={screenQuestions?.answer} seed={screenQuestions} onAsk={ask} onError={setError} />}
         </div>
       )}
@@ -1938,9 +1981,9 @@ function App() {
       <div className="transcript" ref={transcriptBoxRef} onScroll={onTranscriptScroll}>
         {transcript.length === 0 && !answer && !suggestion && !summary && !followup && !screenResult && (
           <div className="transcript-empty">
-            <span className="big">✦</span>
+            <span className="big"><TekaMark size={34} /></span>
             A transcrição da conversa aparece aqui.
-            <br />No modo <b>Entrevista</b> com ⚡ auto ligado, o copiloto
+            <br />No modo <b>Entrevista</b> com <b>auto</b> ligado, o copiloto
             <br />rascunha sua resposta enquanto o entrevistador ainda fala.
             <br />
             <span className="hint">
@@ -1965,8 +2008,8 @@ function App() {
 
       {answer && (
         <div className="answer">
-          <span className="label">✦ resposta{answerNote ? ` · ${answerNote}` : ''}</span>
-          {answer}
+          <span className="label"><Sparkles size={12} /> resposta{answerNote ? ` · ${answerNote}` : ''}</span>
+          <Markdown text={answer} />
           {!!answerTools.length && <div className="mcp-used">Ferramentas: {answerTools.map(t => `${t.serverName || 'MCP'} · ${t.name}${t.isError ? ' (erro)' : ''}`).join(', ')}</div>}
           {!busy && <SuggestedQuestions key={answerQuestions?.answer} seed={answerQuestions} onAsk={ask} onError={setError} />}
         </div>
@@ -1974,7 +2017,7 @@ function App() {
 
       {attached && (
         <div className="attached-chip" title={attached.text.slice(0, 400)}>
-          <span>📋 trecho anexado · {attached.text.length} caracteres</span>
+          <span><ClipboardPaste size={13} /> trecho anexado · {attached.text.length} caracteres</span>
           <button className="mini-link" onClick={() => setAttached(null)} title="Remover o trecho">✕</button>
         </div>
       )}
@@ -1986,7 +2029,7 @@ function App() {
           disabled={busy || suggestion?.streaming}
           title={`Sugerir o que dizer agora (${hintKey('assist')})`}
         >
-          ✦
+          <Sparkles size={17} />
         </button>
         <button
           className="tool-btn"
@@ -1994,14 +2037,14 @@ function App() {
           disabled={Boolean(screenResult?.streaming)}
           title={`Analisar a tela (${hintKey('screenshot')}). O texto digitado vira a pergunta.`}
         >
-          📷
+          <Camera size={17} />
         </button>
         <button
           className={`tool-btn ${attached ? 'active' : ''}`}
           onClick={attachClipboard}
           title={`Anexar o texto copiado à pergunta (atalho direto: ${hintKey('clipboard-prompt')})`}
         >
-          📋
+          <ClipboardPaste size={17} />
         </button>
         <input
           value={question}
@@ -2010,7 +2053,7 @@ function App() {
           placeholder={attached ? 'O que você quer saber sobre o trecho?' : 'Pergunte sobre a reunião…'}
         />
         <button className="send-btn" onClick={ask} disabled={busy || !question.trim()}>
-          {busy ? '…' : '↑'}
+          {busy ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={18} strokeWidth={2.4} />}
         </button>
       </div>
 

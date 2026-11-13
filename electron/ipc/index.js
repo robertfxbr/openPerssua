@@ -77,7 +77,7 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
         // setBounds (x,y preservados) — mais confiável que setSize em janela
         // transparente/frameless no Windows
         win.setResizable(true);
-        win.setBounds({ x: savedBounds.x, y: savedBounds.y, width: 400, height: 148 });
+        win.setBounds({ x: savedBounds.x, y: savedBounds.y, width: 420, height: 210 });
       } else {
         win.setBounds({
           x: savedBounds?.x ?? win.getBounds().x,

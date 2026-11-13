@@ -55,6 +55,8 @@ function createOverlayWindow({ isDev }) {
     skipTaskbar: true,
     resizable: true,
     hasShadow: false,
+    // marca do Teka no Alt+Tab (o ícone do .exe vem do instalador)
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,

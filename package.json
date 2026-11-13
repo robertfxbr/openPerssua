@@ -1,7 +1,7 @@
 {
   "name": "teka",
   "productName": "Teka",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Open-source desktop AI meeting copilot overlay. Works with the LLM you already have, no extra API bill: ChatGPT login, Claude Code CLI, Codex CLI, Gemini CLI, Ollama or a local server (paid APIs optional). Portfolio reimplementation based on public behavior analysis.",
   "license": "MIT",
   "main": "electron/bootstrap.js",
@@ -48,7 +48,8 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -64,10 +65,12 @@
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
+    "@fontsource-variable/bricolage-grotesque": "5.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "concurrently": "^9.0.0",
     "electron": "^38.0.0",
     "electron-builder": "^25.0.0",
+    "lucide-react": "1.72.0",
     "pdfjs-dist": "6.5.438",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

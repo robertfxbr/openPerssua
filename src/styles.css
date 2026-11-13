@@ -1,25 +1,28 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 /* ============================================================
-   Teka — identidade "Aurora"
-   Inspirado no overlay escuro do Perssua (#1a1a1e + vidro),
-   mas com identidade própria: base tint violeta-escura,
-   acento menta-aurora + lilás, hero mic com waveform animado.
+   Teka — identidade visual
+   Grafite quente, um verde-lima de assinatura (você, ações, marca) e
+   pêssego para o que a IA escreve. Bricolage Grotesque nos títulos e
+   rótulos; Segoe UI no texto corrido, que é a letra mais nítida do
+   Windows em tamanho pequeno. Cores de acento vêm de applyTheme().
    ============================================================ */
 :root {
-  --bg: rgba(19, 17, 26, 0.95);
-  --surface: rgba(255, 255, 255, 0.055);
-  --surface-hover: rgba(255, 255, 255, 0.1);
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #eef0f6;
-  --text-dim: #989ca8;
-  --mint: #2fe0b0;
-  --mint-soft: rgba(47, 224, 176, 0.16);
-  --lilac: #8b7cf6;
-  --lilac-soft: rgba(139, 124, 246, 0.14);
-  --danger: #ff7b72;
-  --rec: #ff5f6d;
+  --bg: rgba(22, 21, 19, 0.96);
+  --surface: rgba(255, 250, 240, 0.05);
+  --surface-hover: rgba(255, 250, 240, 0.09);
+  --border: rgba(255, 250, 240, 0.09);
+  --text: #f1efe9;
+  --text-dim: #a29e94;
+  --mint: #c5ef6b;
+  --lilac: #ffb38a;
+  --accent-ink: #161a0c;
+  --mint-soft: color-mix(in srgb, var(--mint) 14%, transparent);
+  --lilac-soft: color-mix(in srgb, var(--lilac) 11%, transparent);
+  --danger: #ff8a7a;
+  --rec: #ff6a5c;
   --radius: 16px;
+  --font-display: 'Bricolage Grotesque Variable', 'Segoe UI Variable', 'Segoe UI', sans-serif;
 }
 
 html, body, #root {
@@ -54,8 +57,8 @@ html, body, #root {
   inset: -40% -20% auto;
   height: 55%;
   background:
-    radial-gradient(ellipse 60% 50% at 25% 40%, rgba(47, 224, 176, 0.13), transparent 70%),
-    radial-gradient(ellipse 55% 45% at 78% 30%, rgba(139, 124, 246, 0.15), transparent 70%);
+    radial-gradient(ellipse 60% 50% at 25% 40%, color-mix(in srgb, var(--mint) 13%, transparent), transparent 70%),
+    radial-gradient(ellipse 55% 45% at 78% 30%, color-mix(in srgb, var(--lilac) 15%, transparent), transparent 70%);
   pointer-events: none;
   z-index: 0;
 }
@@ -77,19 +80,6 @@ html, body, #root {
   gap: 8px;
   flex: 1;
   min-width: 0;
-}
-
-.logo-mark {
-  width: 22px; height: 22px;
-  border-radius: 8px;
-  background: conic-gradient(from 210deg, var(--mint), var(--lilac), var(--mint));
-  display: grid;
-  place-items: center;
-  font-size: 11px;
-  font-weight: 800;
-  color: #101018;
-  flex-shrink: 0;
-  box-shadow: 0 2px 12px rgba(47, 224, 176, 0.35);
 }
 
 .logo-name {
@@ -164,7 +154,7 @@ html, body, #root {
   text-overflow: ellipsis;
 }
 .select-wrap select:hover, .select-wrap select:focus { border-color: var(--mint); }
-.select-wrap select option { background: #1b1826; color: var(--text); }
+.select-wrap select option { background: #1d1c19; color: #f1efe9; }
 
 .select-wrap::after {
   content: '▾';
@@ -202,7 +192,7 @@ html, body, #root {
 .mic-hero:hover { background: var(--surface-hover); transform: scale(1.04); }
 
 .mic-hero.listening {
-  background: linear-gradient(135deg, rgba(255, 95, 109, 0.25), rgba(139, 124, 246, 0.25));
+  background: linear-gradient(135deg, rgba(255, 95, 109, 0.25), color-mix(in srgb, var(--lilac) 25%, transparent));
   border-color: rgba(255, 95, 109, 0.55);
   animation: ring 1.6s ease-out infinite;
 }
@@ -243,7 +233,7 @@ html, body, #root {
   border-radius: 11px;
   border: none;
   background: linear-gradient(135deg, var(--mint), var(--lilac));
-  color: #101018;
+  color: var(--accent-ink);
   font-size: 12.5px;
   font-weight: 700;
   cursor: pointer;
@@ -259,7 +249,7 @@ html, body, #root {
   padding: 8px 12px;
   border-radius: 11px;
   background: var(--mint-soft);
-  border: 1px solid rgba(47, 224, 176, 0.35);
+  border: 1px solid color-mix(in srgb, var(--mint) 35%, transparent);
   color: var(--mint);
 }
 
@@ -322,7 +312,7 @@ html, body, #root {
 .bubble.mic {
   align-self: flex-end;
   background: var(--mint-soft);
-  border: 1px solid rgba(47, 224, 176, 0.3);
+  border: 1px solid color-mix(in srgb, var(--mint) 30%, transparent);
   border-bottom-right-radius: 4px;
 }
 
@@ -350,7 +340,7 @@ html, body, #root {
   padding: 11px 13px;
   border-radius: 13px;
   background: var(--lilac-soft);
-  border: 1px solid rgba(139, 124, 246, 0.35);
+  border: 1px solid color-mix(in srgb, var(--lilac) 35%, transparent);
   font-size: 12.5px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -401,7 +391,7 @@ html, body, #root {
   border-radius: 11px;
   border: none;
   background: linear-gradient(135deg, var(--mint), var(--lilac));
-  color: #101018;
+  color: var(--accent-ink);
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
@@ -455,7 +445,7 @@ html, body, #root {
 .mode-pills .pill.active {
   background: linear-gradient(135deg, var(--mint-soft), var(--lilac-soft));
   color: var(--mint);
-  box-shadow: inset 0 0 0 1px rgba(47, 224, 176, 0.35);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mint) 35%, transparent);
 }
 
 .auto-toggle {
@@ -472,7 +462,7 @@ html, body, #root {
 }
 .auto-toggle.on {
   background: var(--mint-soft);
-  border-color: rgba(47, 224, 176, 0.45);
+  border-color: color-mix(in srgb, var(--mint) 45%, transparent);
   color: var(--mint);
 }
 
@@ -500,7 +490,7 @@ html, body, #root {
   width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--mint);
-  box-shadow: 0 0 8px rgba(47, 224, 176, 0.7);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--mint) 70%, transparent);
 }
 
 .profile-editor {
@@ -528,9 +518,9 @@ html, body, #root {
   margin: 0 14px 10px;
   padding: 11px 13px;
   border-radius: 13px;
-  background: linear-gradient(135deg, rgba(47, 224, 176, 0.1), rgba(139, 124, 246, 0.1));
-  border: 1px solid rgba(47, 224, 176, 0.4);
-  box-shadow: 0 4px 24px rgba(47, 224, 176, 0.12);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--mint) 10%, transparent), color-mix(in srgb, var(--lilac) 10%, transparent));
+  border: 1px solid color-mix(in srgb, var(--mint) 40%, transparent);
+  box-shadow: 0 4px 24px color-mix(in srgb, var(--mint) 12%, transparent);
   font-size: 12.5px;
   line-height: 1.55;
   max-height: 220px;
@@ -576,7 +566,7 @@ html, body, #root {
   color: var(--text-dim);
   margin-bottom: 6px;
   padding-left: 8px;
-  border-left: 2px solid rgba(47, 224, 176, 0.5);
+  border-left: 2px solid color-mix(in srgb, var(--mint) 50%, transparent);
 }
 
 .sug-text { white-space: pre-wrap; }
@@ -585,7 +575,7 @@ html, body, #root {
 .assist-btn {
   width: 38px; height: 38px;
   border-radius: 11px;
-  border: 1px solid rgba(47, 224, 176, 0.4);
+  border: 1px solid color-mix(in srgb, var(--mint) 40%, transparent);
   background: var(--mint-soft);
   color: var(--mint);
   font-size: 15px;
@@ -642,7 +632,7 @@ html, body, #root {
   gap: 5px;
   margin-top: 9px;
   padding-top: 8px;
-  border-top: 1px solid rgba(47, 224, 176, 0.2);
+  border-top: 1px solid color-mix(in srgb, var(--mint) 20%, transparent);
 }
 .chip {
   background: var(--surface);
@@ -663,8 +653,8 @@ html, body, #root {
   padding: 11px 13px;
   border-radius: 13px;
   background: var(--lilac-soft);
-  border: 1px solid rgba(139, 124, 246, 0.45);
-  box-shadow: 0 4px 24px rgba(139, 124, 246, 0.12);
+  border: 1px solid color-mix(in srgb, var(--lilac) 45%, transparent);
+  box-shadow: 0 4px 24px color-mix(in srgb, var(--lilac) 12%, transparent);
   font-size: 12.5px;
   line-height: 1.55;
   max-height: 240px;
@@ -1068,7 +1058,7 @@ html, body, #root {
   padding: 5px 6px 5px 11px;
   border-radius: 99px;
   background: var(--lilac-soft);
-  border: 1px solid rgba(139, 124, 246, 0.4);
+  border: 1px solid color-mix(in srgb, var(--lilac) 40%, transparent);
   font-size: 10.5px;
   color: var(--text);
   display: flex;
@@ -1275,3 +1265,279 @@ html, body, #root {
 .mcp-confirm { background: rgb(from var(--bg) r g b / 1); }
 .mcp-panel select { border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; color: var(--text); background: var(--surface); font: inherit; }
 .mcp-panel option { color: var(--text); background: rgb(from var(--bg) r g b / 1); }
+
+/* ============================================================
+   Camada de identidade (vem por último e ajusta o que está acima)
+   ============================================================ */
+
+/* brilho: uma luz quente só no canto, sem o degradê de duas cores */
+.app::before {
+  inset: -45% -10% auto -30%;
+  height: 60%;
+  background: radial-gradient(ellipse 55% 50% at 30% 45%, color-mix(in srgb, var(--mint) 9%, transparent), transparent 70%);
+}
+:root[data-theme='light'] .app::before { opacity: 0.6; }
+:root[data-theme='light'] .select-wrap select option { background: #f7f5f0; color: #1b1a17; }
+:root[data-theme='light'] ::-webkit-scrollbar-thumb { background: rgba(40, 32, 20, 0.16); }
+
+/* ícones (lucide) alinhados ao texto */
+svg.lucide { flex-shrink: 0; }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- marca ---------- */
+.logo { gap: 9px; }
+.teka-mark { display: block; flex-shrink: 0; }
+.logo-name {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  line-height: 1;
+  font-variation-settings: 'opsz' 96;
+}
+
+.status-pill {
+  font-family: var(--font-display);
+  letter-spacing: 0.2px;
+  text-transform: none;
+  font-size: 11px;
+}
+
+/* ---------- rótulos e títulos na letra da marca ---------- */
+.settings-tab,
+.mode-pills .pill,
+.auto-toggle,
+.theme-label,
+.panel-section,
+.answer .label,
+.sug-head .label,
+.bubble .who,
+.hero-label,
+.chip,
+.login-btn,
+.profile-toggle {
+  font-family: var(--font-display);
+}
+.answer .label,
+.sug-head .label,
+.bubble .who {
+  text-transform: none;
+  letter-spacing: 0.1px;
+  font-size: 11px;
+  font-weight: 650;
+}
+.answer .label svg, .sug-head .label svg { margin-right: 1px; }
+.sug-head .label { display: inline-flex; align-items: center; gap: 5px; }
+
+/* ---------- cérebro + conexão na mesma linha ---------- */
+.provider-row { align-items: center; }
+.auth-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mint);
+  white-space: nowrap;
+}
+.auth-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mint); }
+.auth-badge .auth-link { text-decoration: none; margin-left: 2px; }
+.auth-badge .auth-link:hover { text-decoration: underline; }
+
+/* ---------- modos: pílula ativa sólida na cor da marca ---------- */
+.mode-pills .pill { font-size: 12px; font-weight: 600; }
+.mode-pills .pill.active {
+  background: var(--mint);
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+.auto-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.auto-toggle.on { background: var(--mint-soft); border-color: color-mix(in srgb, var(--mint) 50%, transparent); }
+
+.profile-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+
+/* ---------- microfone ---------- */
+.mic-hero {
+  width: 64px; height: 64px;
+  background: var(--surface);
+  color: var(--mint);
+  border-color: color-mix(in srgb, var(--mint) 30%, transparent);
+}
+.mic-hero:hover { background: var(--mint-soft); }
+.mic-hero.listening {
+  background: color-mix(in srgb, var(--rec) 18%, transparent);
+  border-color: color-mix(in srgb, var(--rec) 55%, transparent);
+  color: var(--rec);
+}
+.wave span { background: var(--mint); }
+
+/* com conversa ou resposta na tela, o microfone vira uma linha compacta */
+.hero.tight {
+  flex-direction: row;
+  justify-content: center;
+  padding: 0 14px 10px;
+  gap: 12px;
+}
+.hero.tight .mic-hero { width: 40px; height: 40px; }
+.hero.tight .mic-hero svg { width: 18px; height: 18px; }
+.hero.tight .levels { flex: 1; max-width: 220px; }
+
+/* ---------- fala de cada lado ---------- */
+.bubble.mic {
+  background: var(--mint-soft);
+  border-color: color-mix(in srgb, var(--mint) 28%, transparent);
+}
+.bubble .who { color: var(--text-dim); margin-bottom: 2px; }
+.bubble.mic .who { color: var(--mint); }
+
+/* ---------- resposta da IA: papel quente, com a cor pêssego ---------- */
+.answer {
+  white-space: normal;
+  background: var(--lilac-soft);
+  border-color: color-mix(in srgb, var(--lilac) 30%, transparent);
+  max-height: 46vh;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.answer .label { color: var(--lilac); margin-bottom: 6px; }
+
+.suggestion {
+  background: color-mix(in srgb, var(--mint) 7%, transparent);
+  border-color: color-mix(in srgb, var(--mint) 35%, transparent);
+  box-shadow: none;
+  max-height: 46vh;
+}
+.suggestion .sug-text, .summary .sug-text { white-space: normal; }
+
+/* ---------- markdown das respostas ---------- */
+.md { user-select: text; }
+.md > * + * { margin-top: 7px; }
+.md p { white-space: pre-wrap; }
+.md strong { font-weight: 650; color: var(--text); }
+.md .md-h { font-family: var(--font-display); font-weight: 700; font-size: 13.5px; }
+.md ul, .md ol { padding-left: 18px; }
+.md li + li { margin-top: 3px; }
+.md li::marker { color: var(--text-dim); }
+.md blockquote {
+  border-left: 2px solid var(--lilac);
+  padding: 2px 0 2px 10px;
+  white-space: pre-wrap;
+}
+.md code {
+  font-family: 'Cascadia Mono', Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--surface);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+.md pre {
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 10px;
+  overflow-x: auto;
+}
+.md pre code { background: none; padding: 0; white-space: pre; }
+:root[data-theme='light'] .md pre { background: rgba(40, 32, 20, 0.05); }
+
+/* ---------- compositor ---------- */
+.composer { gap: 7px; }
+.assist-btn, .tool-btn { display: grid; place-items: center; }
+.assist-btn {
+  background: var(--mint-soft);
+  color: var(--mint);
+  border-color: color-mix(in srgb, var(--mint) 40%, transparent);
+}
+.send-btn { background: var(--mint); color: var(--accent-ink); }
+.send-btn:disabled { opacity: 0.3; }
+
+.attached-chip span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* estado vazio */
+.transcript-empty .big { display: flex; justify-content: center; margin-bottom: 10px; opacity: 0.9; }
+.transcript-empty b { color: var(--text); font-weight: 600; }
+
+/* configurações */
+.settings-tab { letter-spacing: 0.2px; }
+.settings-tab.active { background: var(--mint); color: var(--accent-ink); }
+.swatch { border-radius: 9px; }
+
+.compact-text { font-family: var(--font-display); }
+
+/* ---------- modo mini (comandos + texto mais recente + pergunta) ---------- */
+.app.compact { flex-direction: column; align-items: stretch; }
+.compact-bar { gap: 4px; padding: 9px 10px 6px 12px; }
+.compact-bar .teka-mark { margin-right: 4px; }
+.compact-spacer { flex: 1; }
+.compact-mic {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--mint) 40%, transparent);
+  background: var(--mint-soft);
+  color: var(--mint);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.compact-mic.on {
+  border-color: color-mix(in srgb, var(--rec) 55%, transparent);
+  background: color-mix(in srgb, var(--rec) 16%, transparent);
+  color: var(--rec);
+}
+.compact-mic:disabled { opacity: 0.6; cursor: default; }
+.compact-bar .icon-btn:disabled { opacity: 0.35; cursor: default; }
+.compact-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 14px 6px;
+  user-select: text;
+}
+.compact-kind {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--mint);
+  margin-bottom: 2px;
+}
+.compact-body .compact-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.compact-body .compact-text.dim { color: var(--text-dim); }
+.compact-body .compact-text.dim b { color: var(--text); font-weight: 600; }
+.compact-error { margin-top: 4px; font-size: 11px; color: var(--danger); }
+.compact-ask {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+.compact-ask input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.compact-ask input:focus { border-color: var(--mint); }
+.compact-ask input::placeholder { color: var(--text-dim); }
+.compact-ask .send-btn { width: 30px; height: 30px; border-radius: 9px; }

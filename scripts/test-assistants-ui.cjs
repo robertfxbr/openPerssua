@@ -333,12 +333,12 @@ app.whenReady().then(async () => {
   assert(!(await js(`getComputedStyle(document.querySelector('.mcp-confirm')).backgroundColor`)).includes('0.95'));
   fs.writeFileSync(path.join(temp, 'mcp-confirmacao.png'), (await win.webContents.capturePage()).toPNG());
   await click('negar');
-  await waitFor(() => js(`document.querySelector('.mcp-confirm') === null && document.querySelector('.composer .send-btn')?.textContent.trim() === '↑'`), 'negar e responder');
+  await waitFor(() => js(`document.querySelector('.mcp-confirm') === null && document.querySelector('.composer .send-btn') && !document.querySelector('.composer .send-btn .spin')`), 'negar e responder');
   assert(!requests.at(-1).messages[1].content.includes('A soma é 5'));
   await setValue('.composer input', 'Quanto é 2 mais 3?'); await clickSelector('.composer .send-btn');
   await waitFor(() => js(`document.querySelector('.mcp-confirm') !== null`), 'segunda confirmação MCP'); await click('permitir');
   await waitFor(() => js(`document.querySelector('.mcp-used')?.textContent.includes('somar')`), 'ferramenta usada');
-  await waitFor(() => js(`document.querySelector('.composer .send-btn')?.textContent.trim() === '↑'`), 'resposta final MCP');
+  await waitFor(() => js(`document.querySelector('.composer .send-btn') && !document.querySelector('.composer .send-btn .spin')`), 'resposta final MCP');
   assert(requests.at(-1).messages[1].content.includes('A soma é 5'));
   assert(mcpQueries >= 4);
   await setValue('.composer input', 'Some os valores desta tela'); await clickSelector('.composer [title^="Analisar a tela"]');
