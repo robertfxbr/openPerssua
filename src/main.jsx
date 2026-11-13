@@ -239,6 +239,7 @@ function App() {
   // Se a chamada toca em outro fone/caixa, o lado "Reunião" fica mudo e o
   // usuário precisa saber disso durante a chamada, não depois.
   const sysWatchRef = useRef(null);
+  const lastSttErrorRef = useRef('');
   const [sysSilent, setSysSilent] = useState(false);
   const askRef = useRef(null);          // ask() atual, p/ atalhos registrados uma vez
   const screenRef = useRef(null);       // runScreenAnalysis() atual, idem
@@ -1257,7 +1258,15 @@ function App() {
     v.speaking = false;
     v.silenceMs = 0;
     v.lastFlushAt = Date.now();
-    api.stt.flush(sttId).catch(() => {});
+    // Falha na transcrição aparece na tela (antes sumia em silêncio e a
+    // escuta parecia ligada sem transcrever nada). Mesmo erro repetido não
+    // pisca de novo.
+    api.stt.flush(sttId).catch((e) => {
+      const msg = String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      if (lastSttErrorRef.current === msg) return;
+      lastSttErrorRef.current = msg;
+      setError(`a transcrição falhou: ${msg}`);
+    });
   }
 
   // Encaminha PCM 16kHz mono de uma MediaStream para a sessão STT.

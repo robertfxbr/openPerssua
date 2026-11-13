@@ -219,7 +219,10 @@ class WhisperService {
       '--model', modelPath,
       '--host', '127.0.0.1',
       '--port', String(port),
-      '--convert',
+      // Sem --convert: o app já manda WAV 16 kHz mono, que o servidor lê
+      // direto. O --convert chamava o FFmpeg e gravava um arquivo temporário
+      // na pasta atual; aberto a partir de uma pasta sem permissão de escrita
+      // (ex.: System32), toda fala voltava "FFmpeg conversion failed".
       // Não gera tokens de "não fala" ([Música], (risos)): menos lixo no
       // silêncio e mesma precisão no banco de testes
       '--suppress-nst',
@@ -229,6 +232,8 @@ class WhisperService {
       // várias linhas por pedido e, com o pipe cheio, trava no meio de uma
       // transcrição. O stdout vai fora; do stderr fica só o fim, para erro.
       stdio: ['ignore', 'ignore', 'pipe'],
+      // pasta própria e gravável, seja de onde for que o Teka foi aberto
+      cwd: this.userDataDir,
       windowsHide: true,
     });
     if (proc.pid) lowerPriority(proc.pid);

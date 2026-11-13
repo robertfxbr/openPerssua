@@ -211,7 +211,7 @@ async function bootstrap() {
   await syncTray(settingsStore);
   await shortcuts.init();
   // depois que a janela abriu: mexer em atalhos não atrasa a abertura
-  setTimeout(updateShortcutIcons, 3000);
+  setTimeout(() => updateShortcutIcons(), 3000);
 
   if (!isDev) {
     setTimeout(() => checkUpdates(settingsStore, false), UPDATE_FIRST_CHECK_MS);
