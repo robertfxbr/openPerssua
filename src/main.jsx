@@ -12,7 +12,7 @@ import { AssistantsPanel } from './panels/AssistantsPanel';
 import { ToolsPanel } from './panels/ToolsPanel';
 import { McpConfirmations } from './panels/McpConfirmations';
 import { normalizePreferences } from './assistants/preferences.mjs';
-import { VoicePanel } from './panels/VoicePanel';
+import { VoicePanel, HEAVY_MODELS } from './panels/VoicePanel';
 import { DiagnosticsPanel } from './panels/DiagnosticsPanel';
 import { parseAssistantImport } from './assistants/transfer.mjs';
 import { contextToText, normalizeContext } from './assistants/context.mjs';
@@ -62,6 +62,7 @@ const SYS_SILENT_MS = 90000;     // tempo sem som do PC antes do aviso
 const SYS_SILENT_MIC_MS = 15000; // e você já falou isso nesse meio tempo
 const VAD_SILENCE_MS = 1100;     // silêncio que encerra o enunciado
 const VAD_MAX_WINDOW_MS = 15000; // força flush em falas muito longas
+const STT_SLOW_MS = 20000;       // fala que demora mais que isso para sair: avisa
 
 // AudioWorklet inline (substitui o depreciado ScriptProcessorNode)
 const WORKLET_CODE = `
@@ -242,6 +243,8 @@ function App() {
   const sysWatchRef = useRef(null);
   const lastSttErrorRef = useRef('');
   const [sysSilent, setSysSilent] = useState(false);
+  const [sttSlow, setSttSlow] = useState(null); // transcrição atrasada: { model, heavy, gpu }
+  const sttSlowShownRef = useRef(false);        // uma vez por escuta
   const askRef = useRef(null);          // ask() atual, p/ atalhos registrados uma vez
   const screenRef = useRef(null);       // runScreenAnalysis() atual, idem
   const screenStreamIdRef = useRef(null);
@@ -1136,6 +1139,8 @@ function App() {
       setLevels({ mic: 0, sys: 0 });
       sysWatchRef.current = null;
       setSysSilent(false);
+      setSttSlow(null);
+      sttSlowShownRef.current = false;
       stoppingRef.current = false;
       if (pausing) setError('Escuta pausada pelo lembrete. Suas falas estão salvas; toque no microfone para continuar.');
       else summarizeSession(sess?.dbId, lines); // resumo automático em background
@@ -1293,11 +1298,32 @@ function App() {
     // Falha na transcrição aparece na tela (antes sumia em silêncio e a
     // escuta parecia ligada sem transcrever nada). Mesmo erro repetido não
     // pisca de novo.
+    // Fala que leva mais de 20 s para virar texto: a transcrição está ficando
+    // para trás (modelo grande no processador, PC ocupado) e parece não
+    // funcionar. Avisa uma vez por escuta, dizendo o que fazer.
+    const slowTimer = setTimeout(warnSlowStt, STT_SLOW_MS);
     api.stt.flush(sttId).catch((e) => {
       const msg = String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
       if (lastSttErrorRef.current === msg) return;
       lastSttErrorRef.current = msg;
       setError(`a transcrição falhou: ${msg}`);
+    }).finally(() => clearTimeout(slowTimer));
+  }
+
+  async function warnSlowStt() {
+    if (sttSlowShownRef.current || !sessionRef.current) return;
+    sttSlowShownRef.current = true;
+    const name = sttModelRef.current;
+    const [models, gpu] = await Promise.all([
+      api.stt.listModels().catch(() => []),
+      api.stt.gpuStatus?.().catch(() => null) ?? null,
+    ]);
+    if (!sessionRef.current) return; // a escuta parou nesse meio tempo
+    const onGpu = Boolean(gpu?.backend && gpu.backend.kind !== 'cpu');
+    setSttSlow({
+      model: models.find((m) => m.name === name)?.label || name,
+      heavy: HEAVY_MODELS.has(name) && !onGpu,
+      gpu: Boolean(gpu?.gpu) && !onGpu,
     });
   }
 
@@ -1576,6 +1602,14 @@ function App() {
     <button className="mini-link" onClick={() => setSysSilent(false)}>ok</button>
   </div> : null;
 
+  const sttSlowNotice = sttSlow && listening ? <div className="sys-notice" role="status">
+    <b>A transcrição está atrasada: cada fala está levando mais de 20 s para aparecer.</b>{' '}
+    {sttSlow.heavy
+      ? `O modelo ${sttSlow.model} é pesado demais para o processador. Em ⚙ → voz, ${sttSlow.gpu ? 'ligue a placa de vídeo ou ' : ''}use o Small e comece a escuta de novo.`
+      : `O processador pode estar ocupado com outro programa. Em ⚙ → voz, ${sttSlow.gpu ? 'ligar a placa de vídeo ou ' : ''}usar um modelo menor (Small ou Base) deixa cada fala mais rápida.`}
+    <button className="mini-link" onClick={() => setSttSlow(null)}>ok</button>
+  </div> : null;
+
   const listenNotice = listenDeadline !== null && listening ? <div className="listen-notice" role="alert">
     <span>continuar ouvindo? A escuta pausa em até 60 s.</span>
     <button className="chip" onClick={() => { listenReminderRef.current?.confirm(); setListenDeadline(null); }}>continuar</button>
@@ -1595,6 +1629,7 @@ function App() {
         {listenNotice}
         {clickThroughNotice}
         {sysNotice}
+        {sttSlowNotice}
         <div className="compact-bar">
           <TekaMark size={18} />
           <button
@@ -1685,6 +1720,7 @@ function App() {
       {listenNotice}
       {clickThroughNotice}
       {sysNotice}
+      {sttSlowNotice}
       {showTheme && (
         <div className="theme-panel">
           <div className="settings-tabs">

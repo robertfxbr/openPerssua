@@ -28,7 +28,7 @@
 html, body, #root {
   height: 100%;
   background: transparent;
-  overflow: hidden;
+  overflow: clip;
   font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
   color: var(--text);
   font-size: 14px;
@@ -46,7 +46,10 @@ html, body, #root {
   -webkit-backdrop-filter: blur(28px) saturate(1.3);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* clip, não hidden: o brilho do ::before passa da borda, e com hidden a
+     janela inteira podia deslizar para o lado (clique, foco, rolagem),
+     cortando a esquerda e abrindo um vão transparente à direita */
+  overflow: clip;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
 
@@ -1590,3 +1593,13 @@ svg.lucide { flex-shrink: 0; }
 .sys-notice b { font-weight: 650; }
 .sys-notice .mini-link { margin-left: 6px; }
 .app.compact .sys-notice { margin: 4px 8px 0; padding: 4px 8px; font-size: 11px; max-height: 70px; overflow-y: auto; flex-shrink: 0; }
+
+/* modelo grande rodando no processador */
+.slow-tag { color: var(--lilac); }
+.panel-note.slow-note {
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lilac) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lilac) 40%, transparent);
+  color: var(--text);
+}

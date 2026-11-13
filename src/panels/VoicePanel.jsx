@@ -9,15 +9,27 @@ function formatMB(bytes) {
 
 const BACKEND_LABEL = { vulkan: 'Vulkan', cuda: 'CUDA', cpu: 'processador' };
 
+// Modelos que no processador levam de 20 s a mais de 1 min por fala num PC
+// comum: a transcrição atrasa tanto que parece não funcionar.
+export const HEAVY_MODELS = new Set([
+  'ggml-medium.bin', 'ggml-large-v3-turbo.bin', 'ggml-large-v3-turbo-q5_0.bin', 'ggml-large-v3.bin',
+]);
+
+// A placa só conta se o suporte está baixado e a opção ligada
+export function gpuReady(st) {
+  const kind = st?.gpu?.pack;
+  return Boolean(kind && st.enabled && st.installed?.[kind]);
+}
+
 // Whisper na placa de vídeo: baixar o suporte uma vez, ligar e ver o que
 // está em uso de fato (a placa pode falhar e cair para o processador).
-function GpuSection({ listening, onError }) {
+function GpuSection({ listening, onError, onStatus }) {
   const [st, setSt] = useState(null);
   const [prog, setProg] = useState(null);
   const [busy, setBusy] = useState(false);
 
   function refresh() {
-    api.stt.gpuStatus?.().then(setSt).catch(() => {});
+    api.stt.gpuStatus?.().then((r) => { setSt(r); onStatus?.(r); }).catch(() => {});
   }
 
   useEffect(() => {
@@ -101,6 +113,9 @@ export function VoicePanel({
 }) {
   const [models, setModels] = useState([]);
   const [armed, setArmed] = useState(null); // modelo aguardando 2º clique para apagar
+  const [gpu, setGpu] = useState(null);     // estado da placa (vem da seção da placa)
+  const onCpu = gpu !== null && !gpuReady(gpu);
+  const activeModel = models.find((m) => m.name === sttModel);
 
   function refresh() {
     api.stt.listModels().then(setModels).catch(() => {});
@@ -149,6 +164,7 @@ export function VoicePanel({
                 <span className="assistant-name">{active ? '● ' : ''}{m.label}</span>
                 <span className="history-meta">
                   {m.installed ? formatMB(m.bytes) : `~${formatMB(m.approxMB * 1024 * 1024)}`} · {m.note}
+                  {onCpu && HEAVY_MODELS.has(m.name) && <span className="slow-tag"> · lento no processador</span>}
                 </span>
                 {m.downloading && (
                   <div className="level-track"><div className="level-fill mic" style={{ width: `${pct ?? 2}%` }} /></div>
@@ -184,9 +200,15 @@ export function VoicePanel({
           );
         })}
       </div>
+      {onCpu && activeModel && HEAVY_MODELS.has(activeModel.name) && (
+        <div className="panel-note slow-note">
+          ⚠ O {activeModel.label} está rodando no processador. Cada fala pode levar de 20 s a mais de 1 minuto para aparecer, e a transcrição fica para trás.{' '}
+          {gpu?.gpu ? 'Ligue a placa de vídeo abaixo ou use o Small.' : 'Use o Small, que sai em poucos segundos.'}
+        </div>
+      )}
       {listening && <div className="panel-note">A troca de modelo vale a partir da próxima escuta.</div>}
 
-      <GpuSection listening={listening} onError={onError} />
+      <GpuSection listening={listening} onError={onError} onStatus={setGpu} />
 
       <div className="theme-row">
         <span className="theme-label">idioma</span>
