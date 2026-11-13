@@ -56,6 +56,10 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
 
   // ---- overlay ----
   ipcMain.on('overlay:toggle', () => toggleOverlay(isDev));
+  ipcMain.handle('overlay:show', () => {
+    const win = getOverlayWindow();
+    if (win && !win.isDestroyed() && !win.isVisible()) win.showInactive();
+  });
   ipcMain.handle('overlay:set-click-through', (_e, enabled) => setClickThrough(Boolean(enabled)));
   // Modo mini: reduz a janela para uma pílula; guarda o tamanho anterior p/ voltar
   let savedBounds = null;
@@ -254,6 +258,14 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   ipcMain.handle('settings:delete', (_e, key) => {
     if (!/^assistant\.(context|preferences)\.[\w-]{1,80}$/.test(key)) throw new Error('chave inválida');
     return settingsStore.delete(key);
+  });
+  ipcMain.handle('settings:set-assistant-data', (_e, entries) => {
+    if (!Array.isArray(entries) || entries.length > 301 || entries.some((entry) =>
+      !Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string'
+      || !(entry[0] === 'assistants.custom' || /^assistant\.(context|preferences)\.[\w-]{1,80}$/.test(entry[0])))) {
+      throw new Error('dados de assistentes inválidos');
+    }
+    return settingsStore.setMany(entries);
   });
   ipcMain.handle('settings:get-all', () => settingsStore.getAll());
 

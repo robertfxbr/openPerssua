@@ -67,6 +67,19 @@ class SettingsStore {
     fs.writeFileSync(this.filePath, JSON.stringify(this.cache, null, 2));
   }
 
+  // Importação: escreve todas as chaves juntas e só troca o cache após salvar.
+  async setMany(entries) {
+    const next = { ...this.load(), ...Object.fromEntries(entries) };
+    const pending = `${this.filePath}.tmp`;
+    try {
+      fs.writeFileSync(pending, JSON.stringify(next, null, 2));
+      fs.renameSync(pending, this.filePath);
+      this.cache = next;
+    } finally {
+      if (fs.existsSync(pending)) fs.unlinkSync(pending);
+    }
+  }
+
   // Valor para a tela: segredo vira só "tem / não tem"
   async getForRenderer(key) {
     if (!isSecret(key)) return this.get(key);

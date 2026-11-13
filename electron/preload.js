@@ -16,6 +16,7 @@ function on(channel, callback) {
 contextBridge.exposeInMainWorld('teka', {
   overlay: {
     toggle: () => send('overlay:toggle'),
+    show: () => invoke('overlay:show'),
     setClickThrough: (enabled) => invoke('overlay:set-click-through', enabled),
     setCompact: (compact) => invoke('overlay:set-compact', compact),
     onAssistTrigger: (cb) => on('overlay:assist-trigger', cb),
@@ -107,5 +108,6 @@ contextBridge.exposeInMainWorld('teka', {
     set: (key, value) => invoke('settings:set', { key, value }),
     getAll: () => invoke('settings:get-all'),
     delete: (key) => invoke('settings:delete', key),
+    setAssistantData: (entries) => invoke('settings:set-assistant-data', entries),
   },
 });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { normalizeContext, contextSize, appendContextFile, MAX_CONTEXT_CHARS } from '../assistants/context.mjs';
 import { extractAttachment, ATTACH_ACCEPT } from '../assistants/extract.mjs';
 
@@ -6,6 +6,8 @@ export function AssistantContextEditor({ value, onChange }) {
   const context = normalizeContext(value);
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const filesSize = context.files.reduce((n, f) => n + f.text.length, 0);
 
   async function attach(event) {
@@ -17,12 +19,15 @@ export function AssistantContextEditor({ value, onChange }) {
     for (const file of files) {
       try {
         const text = await extractAttachment(file);
+        if (!mounted.current) return;
         if (!text.trim()) throw new Error('Arquivo sem texto.');
         const result = appendContextFile(next, { name: file.name, text });
         next = result.context;
         if (result.truncated) notices.push(`${file.name}: texto cortado para caber no limite.`);
       } catch (e) { notices.push(`${file.name}: ${e.message}`); }
+      if (!mounted.current) return;
     }
+    if (!mounted.current) return;
     onChange(next);
     setNotice(notices.join(' '));
     setLoading(false);

@@ -43,5 +43,20 @@ const { reasoningOptions, effortCandidates, cliEffortArgs } = require('../electr
   accept = undefined; requests.length = 0;
   await adapter.chat({ ...req, model: 'sem-esforco' });
   assert.ok(!('reasoning' in requests.at(-1)));
+  // Cancelar durante a consulta de ajuda não pode iniciar o modelo depois.
+  let resolveHelp;
+  let spawned = 0;
+  const cliContext = { module: { exports: {} }, require: (name) =>
+    name === 'child_process' ? { spawn: () => { spawned++; throw new Error('spawn não deveria ocorrer'); } } :
+    name === '../reasoning' ? { cliHelp: () => new Promise((resolve) => { resolveHelp = resolve; }),
+      cliEffortArgs, isEffortError: () => false } :
+    name === '../messageFormat' ? { hasImages: () => false } : require(name) };
+  vm.runInNewContext(fs.readFileSync(require.resolve('../electron/llm/providers/ClaudeCodeAdapter'), 'utf8'), cliContext);
+  const cli = new cliContext.module.exports.ClaudeCodeAdapter({ settingsStore: {} });
+  const controller = new AbortController();
+  const pending = cli.chatStream({ messages: req.messages, fast: true, signal: controller.signal, onChunk() {} });
+  controller.abort(); resolveHelp('--effort');
+  await assert.rejects(pending, /cancelado/);
+  assert.equal(spawned, 0);
   console.log('PASS: roteamento manual/ao vivo, CLIs e recuo OAuth com cache e omissão');
 })().catch((e) => { console.error(e); process.exitCode = 1; });

@@ -33,6 +33,7 @@ function probe(cmd) {
 // Roda a CLI com o prompt no stdin. onChunk recebe o texto conforme sai
 // (quando a CLI imprime aos poucos) ou de uma vez no fim.
 function runCli({ cmd, args, prompt, onChunk, signal, clean = (t) => t, streamStdout = false, label }) {
+  if (signal?.aborted) return Promise.reject(new Error('cancelado'));
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { shell: true, cwd: os.tmpdir() });
     let out = '';

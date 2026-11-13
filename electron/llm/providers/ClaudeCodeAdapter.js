@@ -62,6 +62,7 @@ class ClaudeCodeAdapter {
   }
 
   run(prompt, onChunk, signal, effortArgs = []) {
+    if (signal?.aborted) return Promise.reject(new Error('cancelado'));
     return new Promise((resolve, reject) => {
       // stream-json com --print exige --verbose (sem ele a CLI recusa e sai
       // com código 1). --include-partial-messages faz a resposta chegar em

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { serializeAssistants, parseAssistantImport, MAX_TRANSFER_BYTES, MAX_CUSTOM_ASSISTANTS } from '../assistants/transfer.mjs';
 import { normalizeAssistant, INSTRUCTION_USES, DEFAULT_CATEGORIES, filterAssistants, categoryCounts } from '../assistants/model.mjs';
 import { AssistantContextEditor } from './AssistantContextEditor';
 import { BUILTIN_ASSISTANTS, ASSISTANT_MODES } from '../assistants/presets';
@@ -8,7 +9,13 @@ const MAX_INSTRUCTIONS = 4000;
 
 // Aba "assistentes": escolher um pronto, duplicar para ajustar ou criar um
 // do zero. Os prontos não são editáveis para sempre haver um ponto de volta.
-export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, contexts, onContextChange, preferences, onPreferencesChange }) {
+export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, contexts, onContextChange, preferences, onPreferencesChange, onImport, onError }) {
+  const [transferNotice, setTransferNotice] = useState('');
+  const [transferring, setTransferring] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const mutationRef = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
   const all = [...BUILTIN_ASSISTANTS, ...custom];
@@ -19,7 +26,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
 
   function startNew(base) {
     setEditing({
-      id: `c-${Date.now().toString(36)}`,
+      id: `c-${crypto.randomUUID()}`,
       name: base ? `${base.name} (cópia)` : '',
       mode: base?.mode || 'meeting',
       category: normalizeAssistant(base).category,
@@ -31,24 +38,68 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
     });
   }
 
-  function save() {
+  async function save() {
+    if (mutationRef.current) return;
     const name = editing.name.trim();
     if (!name) return;
     const item = normalizeAssistant({ ...editing, name });
     const next = editing.isNew
       ? [...custom, item]
       : custom.map((a) => (a.id === item.id ? item : a));
-    onCustomChange(next);
-    if (editing.preferencesCopy) onPreferencesChange(item.id, editing.preferencesCopy);
-    if (editing.contextCopy) onContextChange(item.id, editing.contextCopy);
-    if (editing.isNew) onSelect(item.id);
-    setEditing(null);
+    mutationRef.current = true; setSaving(true);
+    try {
+      await onCustomChange(next);
+      if (editing.preferencesCopy) await onPreferencesChange(item.id, editing.preferencesCopy);
+      if (editing.contextCopy) await onContextChange(item.id, editing.contextCopy);
+      if (editing.isNew) onSelect(item.id, item);
+      setEditing(null);
+    } catch (e) { onError(`assistente: ${e.message}`); }
+    finally { mutationRef.current = false; setSaving(false); }
   }
 
-  function remove(id) {
-    onCustomChange(custom.filter((a) => a.id !== id));
-    if (activeId === id) onSelect('padrao');
+  async function remove(id) {
+    if (mutationRef.current) return;
+    mutationRef.current = true; setSaving(true);
+    try {
+      await onCustomChange(custom.filter((a) => a.id !== id));
+      if (activeId === id) onSelect('padrao');
+    } catch (e) { onError(`assistente: ${e.message}`); }
+    finally { mutationRef.current = false; setSaving(false); }
   }
+
+  function exportFile() {
+    try {
+      const json = serializeAssistants(custom, contexts, preferences);
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `teka-assistentes-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTransferNotice('JSON preparado com os assistentes próprios e seus contextos.');
+    } catch (e) { setTransferNotice(e.message); }
+  }
+
+  async function importFile(event) {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file || mutationRef.current) return;
+    mutationRef.current = true;
+    setTransferring(true);
+    try {
+      if (file.size > MAX_TRANSFER_BYTES) throw new Error('Arquivo grande demais (máximo de 20 MB).');
+      const text = await file.text();
+      if (!mounted.current) return;
+      const items = parseAssistantImport(text, custom.map((a) => a.id));
+      await onImport(items);
+      setQuery(''); setCategory('');
+      setTransferNotice(`${items.length} assistente(s) importado(s). Os existentes foram mantidos.`);
+    } catch (e) { setTransferNotice(e.message); }
+    finally { mutationRef.current = false; setTransferring(false); }
+  }
+
+  if (transferring) return <div className="panel-note" role="status">importando assistentes…</div>;
+  if (saving) return <div className="panel-note" role="status">salvando assistentes…</div>;
 
   if (editing) {
     return (
@@ -113,7 +164,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
       </button>
       <button className="mini-link" title={`Contexto de ${a.name}`} onClick={() => setContextId(contextId === a.id ? null : a.id)}>contexto</button>
       {builtin
-        ? a.id !== 'padrao' && <button className="mini-link" title="Duplicar para editar" onClick={() => startNew(a)}>⧉</button>
+        ? a.id !== 'padrao' && <button className="mini-link" title="Duplicar para editar" disabled={custom.length >= MAX_CUSTOM_ASSISTANTS} onClick={() => startNew(a)}>⧉</button>
         : (
           <>
             <button className="mini-link" title="Editar" onClick={() => setEditing({ ...normalizeAssistant(a), isNew: false })}>✎</button>
@@ -143,7 +194,13 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
         {filterAssistants(all, query, category).map((a) => row(a, BUILTIN_ASSISTANTS.some((b) => b.id === a.id)))}
         {!filterAssistants(all, query, category).length && <div className="panel-note">Nenhum assistente encontrado.</div>}
       </div>
-      <button className="chip" onClick={() => startNew(null)}>+ novo assistente</button>
+      <div className="assistant-filters">
+        <button className="chip" disabled={custom.length >= MAX_CUSTOM_ASSISTANTS} onClick={() => startNew(null)}>+ novo assistente</button>
+        <button className="mini-link" disabled={!custom.length} onClick={exportFile}>exportar JSON</button>
+        <label className="chip attach-label">importar JSON<input type="file" accept=".json,application/json" onChange={importFile} /></label>
+      </div>
+      <div className="panel-note">O JSON inclui os contextos dos assistentes próprios.</div>
+      {transferNotice && <div className="panel-note" role="status">{transferNotice}</div>}
     </>
   );
 }

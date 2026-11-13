@@ -11,6 +11,7 @@ import { AIPanel } from './panels/AIPanel';
 import { AssistantsPanel } from './panels/AssistantsPanel';
 import { VoicePanel } from './panels/VoicePanel';
 import { DiagnosticsPanel } from './panels/DiagnosticsPanel';
+import { parseAssistantImport } from './assistants/transfer.mjs';
 import { contextToText, normalizeContext } from './assistants/context.mjs';
 import { BUILTIN_ASSISTANTS, findAssistant } from './assistants/presets';
 import { createListenReminder } from './audio/listenReminder.mjs';
@@ -250,6 +251,8 @@ function App() {
   const echoFilterRef = useRef(echoFilter);
   const noiseRef = useRef(noiseSuppression);
   const sttFastRef = useRef(sttFast);
+  const customAssistantsRef = useRef([]);
+  const assistantMutationRef = useRef(false);
   const assistantUsesRef = useRef({});
   const assistantPreferencesRef = useRef({});
   const assistantContextRef = useRef('');
@@ -325,7 +328,9 @@ function App() {
       setAssistantContexts(contexts);
       setAssistantPreferences(preferences);
     }).catch((e) => setError(`contextos: ${e.message}`));
-    api.settings.get('assistants.custom').then((list) => Array.isArray(list) && setCustomAssistants(list));
+    api.settings.get('assistants.custom').then((list) => {
+      if (Array.isArray(list)) { customAssistantsRef.current = list; setCustomAssistants(list); }
+    });
     api.settings.get('assistants.active').then((id) => id && setAssistantId(id));
 
     const unsubDelta = api.stt.onDelta(({ source, text }) => {
@@ -521,10 +526,10 @@ function App() {
 
   // ================= assistentes =================
 
-  function selectAssistant(id) {
+  function selectAssistant(id, selected) {
     setAssistantId(id);
     api.settings.set('assistants.active', id);
-    const a = findAssistant(id, customAssistants);
+    const a = selected || findAssistant(id, customAssistants);
     if (a.mode) changeAssistMode(a.mode);
   }
 
@@ -540,15 +545,44 @@ function App() {
     return api.settings.set(`assistant.context.${id}`, context).catch((e) => setError(`contexto: ${e.message}`));
   }
 
-  function saveCustomAssistants(list) {
-    for (const a of customAssistants.filter((a) => !list.some((n) => n.id === a.id))) {
-      api.settings.delete(`assistant.preferences.${a.id}`).catch((e) => setError(`assistente: ${e.message}`));
-      setAssistantPreferences((all) => { const next = { ...all }; delete next[a.id]; return next; });
-      api.settings.delete(`assistant.context.${a.id}`).catch((e) => setError(`contexto: ${e.message}`));
-      setAssistantContexts((all) => { const next = { ...all }; delete next[a.id]; return next; });
-    }
-    setCustomAssistants(list);
-    api.settings.set('assistants.custom', list);
+  async function mutateAssistants(operation) {
+    if (assistantMutationRef.current) throw new Error('Aguarde o assistente terminar de salvar.');
+    assistantMutationRef.current = true;
+    try { return await operation(); }
+    finally { assistantMutationRef.current = false; }
+  }
+
+  async function saveCustomAssistants(list) {
+    return mutateAssistants(async () => {
+      const previous = customAssistantsRef.current;
+      await api.settings.set('assistants.custom', list);
+      customAssistantsRef.current = list;
+      setCustomAssistants(list);
+      for (const a of previous.filter((a) => !list.some((n) => n.id === a.id))) {
+        await api.settings.delete(`assistant.preferences.${a.id}`);
+        await api.settings.delete(`assistant.context.${a.id}`);
+        setAssistantPreferences((all) => { const next = { ...all }; delete next[a.id]; return next; });
+        setAssistantContexts((all) => { const next = { ...all }; delete next[a.id]; return next; });
+      }
+    });
+  }
+
+  async function importAssistants(items) {
+    if (!items.length) return;
+    return mutateAssistants(async () => {
+      // A leitura do arquivo pode ter começado em outro painel: confere os ids de novo sob o lock.
+      items = parseAssistantImport(JSON.stringify({ format: 'teka-assistants', version: 1, assistants: items }), customAssistantsRef.current.map((a) => a.id));
+      const list = [...customAssistantsRef.current, ...items.map(({ context, preferences, ...assistant }) => assistant)];
+      const entries = items.flatMap((item) => [
+        [`assistant.context.${item.id}`, item.context], [`assistant.preferences.${item.id}`, item.preferences],
+      ]);
+      entries.push(['assistants.custom', list]);
+      await api.settings.setAssistantData(entries);
+      customAssistantsRef.current = list;
+      setCustomAssistants(list);
+      setAssistantContexts((all) => ({ ...all, ...Object.fromEntries(items.map((a) => [a.id, a.context])) }));
+      setAssistantPreferences((all) => ({ ...all, ...Object.fromEntries(items.map((a) => [a.id, a.preferences])) }));
+    });
   }
 
   // ================= atualização =================
@@ -653,7 +687,10 @@ function App() {
     setListenDeadline(null);
     if (!listening || !longListenReminder) return undefined;
     const reminder = createListenReminder({ startedAt: sessionStartRef.current ?? Date.now(),
-      onWarn: setListenDeadline,
+      onWarn: (deadline) => {
+        setListenDeadline(deadline);
+        api.overlay.show().catch(() => {});
+      },
       onPause: () => { setListenDeadline(null); toggleListenRef.current?.({ pause: true }); },
     });
     listenReminderRef.current = reminder;
@@ -1549,6 +1586,8 @@ function App() {
               custom={customAssistants}
               onSelect={selectAssistant}
               onCustomChange={saveCustomAssistants}
+              onImport={importAssistants}
+              onError={setError}
               preferences={assistantPreferences}
               onPreferencesChange={saveAssistantPreferences}
               contexts={assistantContexts}
