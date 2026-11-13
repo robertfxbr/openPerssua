@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+const { reasoningOptions } = require('../llm/reasoning');
 const { LLMRouter, TASKS } = require('../llm/LLMRouter');
 const { WhisperService } = require('../stt/WhisperService');
 const { isSecret, MASK } = require('../settings/SettingsStore');
@@ -160,7 +161,8 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   ipcMain.handle('llm:list-providers', () => router.listProviders());
   ipcMain.handle('llm:list-tasks', () => TASKS);
   ipcMain.handle('llm:chat', async (_e, req) => {
-    return router.chat({ messages: buildMessages(req), model: req.model, task: taskFor(req) });
+    return router.chat({ messages: buildMessages(req), model: req.model, task: taskFor(req),
+      ...reasoningOptions(req, await settingsStore.get('llm.thinkMore')) });
   });
   // Diagnóstico: mede se o provedor principal responde e em quanto tempo
   ipcMain.handle('llm:test', async () => {
@@ -197,7 +199,7 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
       model: req.model,
       task: taskFor(req),
       // sugestão ao vivo: o adaptador usa o raciocínio mais leve que o modelo aceitar
-      fast: taskFor(req) === 'assist',
+      ...reasoningOptions(req, await settingsStore.get('llm.thinkMore')),
       signal: controller.signal,
       onChunk: (delta) => send('llm:stream-chunk', { streamId, delta }),
     })

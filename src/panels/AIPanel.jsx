@@ -62,7 +62,7 @@ function ProviderField({ field, onSaved }) {
 // compactada e tradução ao vivo.
 export function AIPanel({
   providers, mainProvider, onProvidersChanged,
-  compactEnabled, onCompactChange, memory,
+  compactEnabled, onCompactChange, memory, thinkMore, onThinkMoreChange,
   translate, onTranslateChange,
 }) {
   const [configId, setConfigId] = useState(mainProvider || '');
@@ -113,6 +113,8 @@ export function AIPanel({
         </button>
       )}
 
+      <label className="option-label"><input type="checkbox" checked={thinkMore} onChange={(e) => onThinkMoreChange(e.target.checked)} /> Pensar mais</label>
+      <div className="panel-note">Mais raciocínio nas perguntas e na tela; a resposta demora mais. Depende do provedor. Sugestões ao vivo continuam rápidas.</div>
       <div className="panel-section">modelo por tarefa</div>
       <div className="panel-note">Vazio = usa o cérebro e o modelo principais.</div>
       {Object.entries(taskLabels).map(([task, label]) => {

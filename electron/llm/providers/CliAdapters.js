@@ -9,6 +9,7 @@
 
 const { spawn } = require('child_process');
 const os = require('os');
+const { cliHelp, cliEffortArgs, isEffortError } = require('../reasoning');
 const { hasImages } = require('../messageFormat');
 
 const SAFE_MODEL = /^[\w.:/-]{1,64}$/;
@@ -86,14 +87,14 @@ class CliAdapter {
     return model && SAFE_MODEL.test(model) ? ['-m', model] : [];
   }
 
-  async chat({ messages, model, signal }) {
+  async chat({ messages, model, signal, fast, thinkMore }) {
     this.rejectImages(messages);
-    return this.run({ prompt: flatten(messages), model, signal });
+    return this.run({ prompt: flatten(messages), model, signal, fast, thinkMore });
   }
 
-  async chatStream({ messages, model, onChunk, signal }) {
+  async chatStream({ messages, model, onChunk, signal, fast, thinkMore }) {
     this.rejectImages(messages);
-    return this.run({ prompt: flatten(messages), model, onChunk, signal });
+    return this.run({ prompt: flatten(messages), model, onChunk, signal, fast, thinkMore });
   }
 }
 
@@ -110,16 +111,18 @@ class CodexCliAdapter extends CliAdapter {
     });
   }
 
-  run({ prompt, model, onChunk, signal }) {
-    return runCli({
-      cmd: this.cmd,
-      // read-only: o modelo não pode alterar arquivos; sem PROMPT o codex lê o stdin
-      args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--color', 'never', ...this.modelArgs(model)],
-      prompt,
-      onChunk,
-      signal,
-      label: 'Codex CLI',
-    });
+  async run({ prompt, model, onChunk, signal, fast, thinkMore }) {
+    const help = fast || thinkMore ? await cliHelp('codex') : '';
+    const efforts = fast ? ['minimal', 'low', undefined] : thinkMore ? ['medium', 'high', 'low', undefined] : [undefined];
+    const base = ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--color', 'never', ...this.modelArgs(model)];
+    for (let i = 0; i < efforts.length; i++) {
+      const args = cliEffortArgs('codex', efforts[i], help);
+      try {
+        return await runCli({ cmd: this.cmd, args: [...base, ...args], prompt, onChunk, signal, label: 'Codex CLI' });
+      } catch (e) {
+        if (!args.length || signal?.aborted || !isEffortError(e) || i === efforts.length - 1) throw e;
+      }
+    }
   }
 }
 

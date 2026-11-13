@@ -18,7 +18,7 @@ const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // usuário tem 5 min para concluir no n
 
 // Níveis de raciocínio para a sugestão ao vivo, do mais rápido ao padrão.
 // "low" fica por último porque todo modelo de raciocínio aceita.
-const FAST_EFFORTS = ['none', 'minimal', 'low'];
+const { effortCandidates } = require('../reasoning');
 const rejectedEffort = new Set(); // "modelo|nível" recusados nesta execução
 
 class ChatGPTOAuthAdapter {
@@ -163,16 +163,16 @@ class ChatGPTOAuthAdapter {
 
   // ---- Chamadas usando o token da assinatura ----
   // O Codex CLI consome o endpoint de Responses API com o token OAuth.
-  async chat({ messages }) {
+  async chat(req) {
     let result = '';
-    await this.chatStream({ messages, onChunk: (d) => { result += d; } });
+    await this.chatStream({ ...req, onChunk: (d) => { result += d; } });
     return result;
   }
 
   // Tokens OAuth do login ChatGPT NÃO são aceitos em api.openai.com — o
   // Codex CLI consome o backend próprio (chatgpt.com/backend-api/codex),
   // com o account-id extraído do JWT e header beta de responses.
-  async chatStream({ messages, model, onChunk, signal, fast }) {
+  async chatStream({ messages, model, onChunk, signal, fast, thinkMore }) {
     let token = await this.getValidToken();
     if (!token?.access_token) throw new Error('não autenticado — faça login com ChatGPT');
 
@@ -186,7 +186,7 @@ class ChatGPTOAuthAdapter {
       store: false,
       instructions: 'You are a helpful meeting copilot assistant.',
       // Copiloto ao vivo: latência importa mais que raciocínio profundo
-      reasoning: { effort },
+      ...(effort ? { reasoning: { effort } } : {}),
     });
 
     const doRequest = (accessToken, modelName, effort) => {
@@ -209,7 +209,7 @@ class ChatGPTOAuthAdapter {
     // Sugestão ao vivo (fast): tenta o raciocínio mais leve primeiro. Cada
     // modelo aceita um conjunto diferente; o que ele recusar não é tentado de
     // novo enquanto o app estiver aberto.
-    const efforts = () => (fast ? FAST_EFFORTS : ['low']).filter((e) => !rejectedEffort.has(`${modelName}|${e}`));
+    const efforts = () => effortCandidates({ fast, thinkMore }).filter((e) => e === undefined || !rejectedEffort.has(`${modelName}|${e}`));
     let tries = efforts();
     let res = await doRequest(token.access_token, modelName, tries[0]);
 

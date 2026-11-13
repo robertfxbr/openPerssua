@@ -187,6 +187,7 @@ function App() {
   const [assistantContexts, setAssistantContexts] = useState({});
   const [assistantPreferences, setAssistantPreferences] = useState({});
   const [compactEnabled, setCompactEnabled] = useState(true);
+  const [thinkMore, setThinkMore] = useState(false);
   const [memory, setMemory] = useState('');
   const [translate, setTranslate] = useState(DEFAULT_TRANSLATE);
   const [echoFilter, setEchoFilter] = useState(true);
@@ -306,6 +307,7 @@ function App() {
     loadFlag('audio.noiseSuppression', setNoiseSuppression);
     loadFlag('stt.fast', setSttFast);
     loadFlag('llm.compact', setCompactEnabled);
+    loadFlag('llm.thinkMore', setThinkMore);
     api.settings.get('translate.config').then((t) => t && setTranslate({ ...DEFAULT_TRANSLATE, ...t }));
     api.settings.getAll().then((all) => {
       const contexts = {};
@@ -1496,6 +1498,8 @@ function App() {
               providers={providers}
               mainProvider={provider}
               onProvidersChanged={refreshProviders}
+              thinkMore={thinkMore}
+              onThinkMoreChange={(v) => changeFlag('llm.thinkMore', setThinkMore, v)}
               compactEnabled={compactEnabled}
               onCompactChange={(v) => changeFlag('llm.compact', setCompactEnabled, v)}
               memory={memory}

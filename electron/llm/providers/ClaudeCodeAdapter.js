@@ -5,6 +5,7 @@
 // limite de tamanho de linha de comando do Windows.
 
 const { spawn } = require('child_process');
+const { cliHelp, cliEffortArgs, isEffortError } = require('../reasoning');
 const { hasImages } = require('../messageFormat');
 
 class ClaudeCodeAdapter {
@@ -38,17 +39,29 @@ class ClaudeCodeAdapter {
     }
   }
 
-  async chat({ messages, signal }) {
+  async chat({ messages, signal, fast, thinkMore }) {
     this.rejectImages(messages);
-    return this.run(this.flatten(messages), null, signal);
+    return this.runWithEffort(this.flatten(messages), null, signal, { fast, thinkMore });
   }
 
-  async chatStream({ messages, onChunk, signal }) {
+  async chatStream({ messages, onChunk, signal, fast, thinkMore }) {
     this.rejectImages(messages);
-    return this.run(this.flatten(messages), onChunk, signal);
+    return this.runWithEffort(this.flatten(messages), onChunk, signal, { fast, thinkMore });
   }
 
-  run(prompt, onChunk, signal) {
+  async runWithEffort(prompt, onChunk, signal, { fast, thinkMore }) {
+    const help = fast || thinkMore ? await cliHelp('claude') : '';
+    const effortArgs = cliEffortArgs('claude', fast ? 'low' : thinkMore ? 'medium' : undefined, help);
+    let emitted = false;
+    const emit = onChunk ? (text) => { emitted = true; onChunk(text); } : null;
+    try { return await this.run(prompt, emit, signal, effortArgs); }
+    catch (e) {
+      if (!effortArgs.length || emitted || signal?.aborted || !isEffortError(e)) throw e;
+      return this.run(prompt, emit, signal);
+    }
+  }
+
+  run(prompt, onChunk, signal, effortArgs = []) {
     return new Promise((resolve, reject) => {
       // stream-json com --print exige --verbose (sem ele a CLI recusa e sai
       // com código 1). --include-partial-messages faz a resposta chegar em
@@ -58,7 +71,8 @@ class ClaudeCodeAdapter {
         : ['-p', '--output-format', 'text'];
       // shell:true no Windows para resolver claude.cmd; o prompt NÃO passa
       // pela linha de comando (vai por stdin), então não há risco de quoting.
-      const child = spawn('claude', args, { shell: true });
+      args.push(...effortArgs);
+      const child = spawn('claude', args, { shell: true, windowsHide: true });
       let output = '';
       let ndjsonBuffer = '';
       let sawDelta = false;      // chegaram pedaços (text_delta)?
