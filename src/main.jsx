@@ -23,8 +23,9 @@ import { formatClock } from './util/time';
 import { prettyAccelerator } from './util/accelerator';
 import {
   History, Settings2, Minimize2, Maximize2, EyeOff, Ghost, MousePointerClick, Mic, Square, LoaderCircle, Sparkles, Camera,
-  ClipboardPaste, ArrowUp, Zap, IdCard, ChevronDown, ChevronUp, Mail, X, Copy,
+  ClipboardPaste, ArrowUp, Zap, IdCard, ChevronDown, ChevronUp, Mail, X, Copy, ScrollText,
 } from 'lucide-react';
+import { TeleprompterView } from './teleprompter/TeleprompterView';
 import '@fontsource-variable/bricolage-grotesque';
 import { Markdown } from './ui/Markdown';
 import { TekaMark } from './ui/TekaMark';
@@ -1747,6 +1748,24 @@ function App() {
     );
   }
 
+  // ---- teleprompter: lê o roteiro anexado em "meu contexto" ----
+  if (view === 'prompter') {
+    const ctx = normalizeContext(assistantContexts[assistantId]);
+    const sources = [
+      ...ctx.files.filter((f) => f.text.trim()).map((f, i) => ({ id: `file-${i}-${f.name}`, label: f.name, text: f.text.trim() })),
+      ...(ctx.text.trim() ? [{ id: 'context-text', label: 'texto do meu contexto', text: ctx.text.trim() }] : []),
+    ];
+    return (
+      <TeleprompterView
+        sources={sources}
+        ghost={ghost}
+        onGhost={(hidden) => changeGhost({ hidden })}
+        onBack={() => setView('live')}
+        notice={<>{listenNotice}{clickThroughNotice}</>}
+      />
+    );
+  }
+
   return (
     <div className={`app ${ghost.clickThrough ? 'passthrough' : ''}`}>
       <div className="header">
@@ -1759,6 +1778,7 @@ function App() {
           {listening ? `ouvindo · ${formatClock(elapsedMs)}` : 'parado'}
         </div>
         <button className="icon-btn" title="Histórico de sessões" onClick={openHistory}><History size={16} /></button>
+        <button className="icon-btn" title="Teleprompter: lê o roteiro do meu contexto, fora da gravação" onClick={() => setView('prompter')}><ScrollText size={16} /></button>
         <button className={`icon-btn ${showTheme ? 'active' : ''}`} title="Configurações" onClick={() => setShowTheme(!showTheme)}><Settings2 size={16} /></button>
         <button className={`icon-btn ghost-btn ${ghost.hidden ? 'active' : ''}`} title={ghostTitle} onClick={() => changeGhost({ hidden: !ghost.hidden })}><Ghost size={16} /></button>
         <button className="icon-btn" title="Modo mini" onClick={toggleCompact}><Minimize2 size={16} /></button>
