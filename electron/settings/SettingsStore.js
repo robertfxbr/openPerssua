@@ -62,6 +62,11 @@ class SettingsStore {
     fs.writeFileSync(this.filePath, JSON.stringify(this.cache, null, 2));
   }
 
+  async delete(key) {
+    delete this.load()[key];
+    fs.writeFileSync(this.filePath, JSON.stringify(this.cache, null, 2));
+  }
+
   // Valor para a tela: segredo vira só "tem / não tem"
   async getForRenderer(key) {
     if (!isSecret(key)) return this.get(key);

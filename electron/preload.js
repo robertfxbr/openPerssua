@@ -106,5 +106,6 @@ contextBridge.exposeInMainWorld('teka', {
     get: (key) => invoke('settings:get', key),
     set: (key, value) => invoke('settings:set', { key, value }),
     getAll: () => invoke('settings:get-all'),
+    delete: (key) => invoke('settings:delete', key),
   },
 });

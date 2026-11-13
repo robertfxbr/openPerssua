@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AssistantContextEditor } from './AssistantContextEditor';
 import { BUILTIN_ASSISTANTS, ASSISTANT_MODES } from '../assistants/presets';
 
 const MODE_LABEL = Object.fromEntries(ASSISTANT_MODES);
@@ -6,7 +7,8 @@ const MAX_INSTRUCTIONS = 4000;
 
 // Aba "assistentes": escolher um pronto, duplicar para ajustar ou criar um
 // do zero. Os prontos não são editáveis para sempre haver um ponto de volta.
-export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange }) {
+export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, contexts, onContextChange }) {
+  const [contextId, setContextId] = useState(null);
   const [editing, setEditing] = useState(null); // { id, name, mode, instructions, isNew }
 
   function startNew(base) {
@@ -15,6 +17,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange }) 
       name: base ? `${base.name} (cópia)` : '',
       mode: base?.mode || 'meeting',
       instructions: base?.instructions || '',
+      contextCopy: base ? contexts[base.id] : undefined,
       isNew: true,
     });
   }
@@ -32,6 +35,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange }) 
       ? [...custom, item]
       : custom.map((a) => (a.id === item.id ? item : a));
     onCustomChange(next);
+    if (editing.contextCopy) onContextChange(item.id, editing.contextCopy);
     if (editing.isNew) onSelect(item.id);
     setEditing(null);
   }
@@ -81,11 +85,12 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange }) 
   }
 
   const row = (a, builtin) => (
-    <div key={a.id} className={`assistant-row ${activeId === a.id ? 'active' : ''}`}>
+    <React.Fragment key={a.id}><div className={`assistant-row ${activeId === a.id ? 'active' : ''}`}>
       <button className="assistant-pick" onClick={() => onSelect(a.id)} title={a.instructions || 'Sem instruções extras'}>
         <span className="assistant-name">{activeId === a.id ? '● ' : ''}{a.name}</span>
         <span className="history-meta">{a.mode ? MODE_LABEL[a.mode] : 'mantém o modo'}{builtin ? '' : ' · seu'}</span>
       </button>
+      <button className="mini-link" title={`Contexto de ${a.name}`} onClick={() => setContextId(contextId === a.id ? null : a.id)}>contexto</button>
       {builtin
         ? a.id !== 'padrao' && <button className="mini-link" title="Duplicar para editar" onClick={() => startNew(a)}>⧉</button>
         : (
@@ -95,6 +100,8 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange }) 
           </>
         )}
     </div>
+    {contextId === a.id && <AssistantContextEditor key={a.id} value={contexts[a.id]} onChange={(value) => onContextChange(a.id, value)} />}
+    </React.Fragment>
   );
 
   return (

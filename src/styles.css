@@ -1237,3 +1237,11 @@ html, body, #root {
   flex-shrink: 0;
 }
 .chip.active { border-color: var(--mint); color: var(--mint); background: var(--mint-soft); }
+
+/* Contexto por assistente, dentro da janela pequena de configurações. */
+.assistant-context { display: flex; flex-direction: column; gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; }
+.assistant-context .profile-editor { margin: 5px 0 0; width: 100%; box-sizing: border-box; }
+.context-file { display: flex; gap: 5px; align-items: center; }
+.context-file span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.attach-label { align-self: flex-start; cursor: pointer; }
+.attach-label input { display: none; }

@@ -10,6 +10,7 @@ import { AIPanel } from './panels/AIPanel';
 import { AssistantsPanel } from './panels/AssistantsPanel';
 import { VoicePanel } from './panels/VoicePanel';
 import { DiagnosticsPanel } from './panels/DiagnosticsPanel';
+import { contextToText, normalizeContext } from './assistants/context.mjs';
 import { BUILTIN_ASSISTANTS, findAssistant } from './assistants/presets';
 import { findEcho, ECHO_WINDOW_MS } from './audio/echo';
 import { formatClock } from './util/time';
@@ -180,6 +181,7 @@ function App() {
   // ---- onda 2: assistentes, memória, tradução, eco, e-mail, atualização ----
   const [assistantId, setAssistantId] = useState('padrao');
   const [customAssistants, setCustomAssistants] = useState([]);
+  const [assistantContexts, setAssistantContexts] = useState({});
   const [compactEnabled, setCompactEnabled] = useState(true);
   const [memory, setMemory] = useState('');
   const [translate, setTranslate] = useState(DEFAULT_TRANSLATE);
@@ -238,6 +240,7 @@ function App() {
   const echoFilterRef = useRef(echoFilter);
   const noiseRef = useRef(noiseSuppression);
   const sttFastRef = useRef(sttFast);
+  const assistantContextRef = useRef('');
   const assistantRef = useRef('');       // instruções do assistente escolhido
   const summaryCtxRef = useRef(null);    // { dbId, transcript, memory } da última sessão encerrada
 
@@ -258,7 +261,8 @@ function App() {
   useEffect(() => { sttFastRef.current = sttFast; }, [sttFast]);
   useEffect(() => {
     assistantRef.current = findAssistant(assistantId, customAssistants).instructions || '';
-  }, [assistantId, customAssistants]);
+    assistantContextRef.current = contextToText(assistantContexts[assistantId]);
+  }, [assistantId, customAssistants, assistantContexts]);
 
   useEffect(() => {
     refreshProviders();
@@ -294,6 +298,13 @@ function App() {
     loadFlag('stt.fast', setSttFast);
     loadFlag('llm.compact', setCompactEnabled);
     api.settings.get('translate.config').then((t) => t && setTranslate({ ...DEFAULT_TRANSLATE, ...t }));
+    api.settings.getAll().then((all) => {
+      const contexts = {};
+      for (const [key, value] of Object.entries(all)) {
+        if (key.startsWith('assistant.context.')) contexts[key.slice(18)] = normalizeContext(value);
+      }
+      setAssistantContexts(contexts);
+    }).catch((e) => setError(`contextos: ${e.message}`));
     api.settings.get('assistants.custom').then((list) => Array.isArray(list) && setCustomAssistants(list));
     api.settings.get('assistants.active').then((id) => id && setAssistantId(id));
 
@@ -497,7 +508,17 @@ function App() {
     if (a.mode) changeAssistMode(a.mode);
   }
 
+  function saveAssistantContext(id, value) {
+    const context = normalizeContext(value);
+    setAssistantContexts((all) => ({ ...all, [id]: context }));
+    return api.settings.set(`assistant.context.${id}`, context).catch((e) => setError(`contexto: ${e.message}`));
+  }
+
   function saveCustomAssistants(list) {
+    for (const a of customAssistants.filter((a) => !list.some((n) => n.id === a.id))) {
+      api.settings.delete(`assistant.context.${a.id}`).catch((e) => setError(`contexto: ${e.message}`));
+      setAssistantContexts((all) => { const next = { ...all }; delete next[a.id]; return next; });
+    }
     setCustomAssistants(list);
     api.settings.set('assistants.custom', list);
   }
@@ -840,6 +861,7 @@ function App() {
         question: q,
         ...liveContext(layered ? INTERVIEW_CONTEXT_LINES : ASSIST_CONTEXT_LINES),
         assistant: assistantRef.current || undefined,
+        assistantContext: assistantContextRef.current || undefined,
         assistMode: assistModeRef.current,
         profile: profileRef.current,
         instruction,
@@ -888,6 +910,7 @@ function App() {
     try {
       const text = await api.llm.chat({
         mode: 'summary',
+        assistantContext: assistantContextRef.current || undefined,
         summaryKind: interview ? 'interview' : undefined,
         profile: interview ? profileRef.current : undefined,
         transcript: ctx.transcript,
@@ -916,6 +939,7 @@ function App() {
         memory: ctx.memory,
         summary: summary?.text || undefined,
         assistant: assistantRef.current || undefined,
+        assistantContext: assistantContextRef.current || undefined,
         model: llmModelRef.current || undefined,
       });
       setFollowup({ text, streaming: false });
@@ -1181,6 +1205,7 @@ function App() {
         question: q,
         ...liveContext(),
         assistant: assistantRef.current || undefined,
+        assistantContext: assistantContextRef.current || undefined,
         context: context || undefined,
         model: llmModelRef.current || undefined,
       });
@@ -1255,6 +1280,7 @@ function App() {
         question: q,
         ...liveContext(),
         assistant: assistantRef.current || undefined,
+        assistantContext: assistantContextRef.current || undefined,
         profile: profileRef.current,
         model: llmModelRef.current || undefined,
       });
@@ -1346,6 +1372,7 @@ function App() {
         listening={listening || starting}
         activeSessionId={sessionRef.current?.dbId || null}
         model={llmModel || undefined}
+        assistantContext={contextToText(assistantContexts[assistantId])}
         assistant={assistantRef.current || undefined}
         profile={profile}
       />
@@ -1435,6 +1462,8 @@ function App() {
               custom={customAssistants}
               onSelect={selectAssistant}
               onCustomChange={saveCustomAssistants}
+              contexts={assistantContexts}
+              onContextChange={saveAssistantContext}
             />
           )}
 

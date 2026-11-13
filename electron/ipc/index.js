@@ -13,70 +13,12 @@ const { TokenStore } = require('../llm/providers/ChatGPTOAuthAdapter');
 const {
   setClickThrough, toggleOverlay, setCompactMode, repaintOverlay, persistWindowState,
 } = require('../windows/OverlayWindow');
-const { buildCopilotMessages, buildSummaryMessages } = require('../prompts/meeting');
-const { buildInterviewSummaryMessages } = require('../prompts/interview');
-const { buildAssistMessages } = require('../prompts/assist');
-const { buildScreenMessages } = require('../prompts/screen');
-const {
-  buildFollowupMessages, buildCompactMessages, buildTranslateMessages, buildPingMessages,
-} = require('../prompts/followup');
+const { buildMessages } = require('../prompts');
+const { buildPingMessages } = require('../prompts/followup');
 const updater = require('../system/updater');
 const { listDisplays, moveToDisplay } = require('../system/displays');
 const { openLogsFolder, copyRecentLogs } = require('../system/logs');
 const { captureScreen } = require('../system/screenshot');
-
-// Trecho colado muito grande estoura o contexto de modelos menores
-const MAX_CONTEXT_CHARS = 20000;
-
-const text = (v, max) => (typeof v === 'string' ? v.slice(0, max) : undefined);
-
-function buildMessages(req) {
-  const memory = text(req.memory, 8000);
-  const assistant = text(req.assistant, 4000);
-  switch (req.mode) {
-    case 'summary':
-      return req.summaryKind === 'interview'
-        ? buildInterviewSummaryMessages({ transcript: req.transcript, memory, profile: text(req.profile, 6000) })
-        : buildSummaryMessages({ transcript: req.transcript, memory });
-    case 'email':
-      return buildFollowupMessages({
-        transcript: req.transcript, memory, summary: text(req.summary, 8000), assistant,
-      });
-    case 'compact':
-      return buildCompactMessages({ memory, transcript: req.transcript });
-    case 'translate':
-      return buildTranslateMessages({ text: req.text, target: req.target });
-    case 'ping':
-      return buildPingMessages();
-    case 'screen':
-      return buildScreenMessages({
-        image: req.image,
-        question: req.question,
-        transcript: req.transcript,
-        profile: req.profile,
-        memory,
-        assistant,
-      });
-    case 'assist':
-      return buildAssistMessages({
-        transcript: req.transcript,
-        question: req.question,
-        mode: req.assistMode,
-        profile: req.profile,
-        instruction: req.instruction,
-        memory,
-        assistant,
-      });
-    default:
-      return buildCopilotMessages({
-        transcript: req.transcript,
-        question: req.question,
-        extraContext: text(req.context, MAX_CONTEXT_CHARS),
-        memory,
-        assistant,
-      });
-  }
-}
 
 // Qual configuração de "modelo por tarefa" vale para cada modo
 const TASK_OF_MODE = {
@@ -306,6 +248,10 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   ipcMain.handle('settings:set', (_e, { key, value }) => {
     if (isSecret(key) && value === MASK) return undefined; // campo não mexido
     return settingsStore.set(key, value);
+  });
+  ipcMain.handle('settings:delete', (_e, key) => {
+    if (!/^assistant\.(context|preferences)\.[\w-]{1,80}$/.test(key)) throw new Error('chave inválida');
+    return settingsStore.delete(key);
   });
   ipcMain.handle('settings:get-all', () => settingsStore.getAll());
 
