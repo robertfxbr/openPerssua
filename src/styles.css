@@ -1254,3 +1254,6 @@ html, body, #root {
 .listen-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; margin: 5px 10px; border: 1px solid var(--mint); border-radius: 9px; background: var(--mint-soft); font-size: 11px; flex-shrink: 0; }
 .listen-notice span { flex: 1 1 130px; }
 .compact .listen-notice { font-size: 10px; padding: 4px 8px; margin: 3px 8px; }
+.assistant-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.assistant-filters .model-input { flex: 1; min-width: 100px; }
+.assistant-category { display: flex; align-items: center; gap: 8px; font-size: 11px; }

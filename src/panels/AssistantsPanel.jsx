@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { normalizeAssistant, INSTRUCTION_USES } from '../assistants/model.mjs';
+import { normalizeAssistant, INSTRUCTION_USES, DEFAULT_CATEGORIES, filterAssistants, categoryCounts } from '../assistants/model.mjs';
 import { AssistantContextEditor } from './AssistantContextEditor';
 import { BUILTIN_ASSISTANTS, ASSISTANT_MODES } from '../assistants/presets';
 
@@ -9,6 +9,11 @@ const MAX_INSTRUCTIONS = 4000;
 // Aba "assistentes": escolher um pronto, duplicar para ajustar ou criar um
 // do zero. Os prontos não são editáveis para sempre haver um ponto de volta.
 export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, contexts, onContextChange, preferences, onPreferencesChange }) {
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('');
+  const all = [...BUILTIN_ASSISTANTS, ...custom];
+  const counts = categoryCounts(all, query);
+  const categories = [...new Set([...DEFAULT_CATEGORIES, ...all.map((a) => normalizeAssistant(a).category)])].sort((a, b) => a.localeCompare(b, 'pt-BR'));
   const [contextId, setContextId] = useState(null);
   const [editing, setEditing] = useState(null); // { id, name, mode, instructions, isNew }
 
@@ -17,6 +22,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
       id: `c-${Date.now().toString(36)}`,
       name: base ? `${base.name} (cópia)` : '',
       mode: base?.mode || 'meeting',
+      category: normalizeAssistant(base).category,
       instructions: base?.instructions || '',
       instructionsByUse: normalizeAssistant(base).instructionsByUse,
       contextCopy: base ? contexts[base.id] : undefined,
@@ -55,6 +61,11 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
           placeholder="nome do assistente"
           onChange={(e) => setEditing({ ...editing, name: e.target.value })}
         />
+        <label className="assistant-category">Categoria
+          <input className="model-input" list="assistant-categories" value={editing.category || 'Geral'} maxLength={40}
+            placeholder="escolha ou escreva uma nova" onChange={(e) => setEditing({ ...editing, category: e.target.value })} />
+          <datalist id="assistant-categories">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+        </label>
         <div className="mode-pills slim">
           {ASSISTANT_MODES.map(([id, label]) => (
             <button
@@ -98,7 +109,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
     <React.Fragment key={a.id}><div className={`assistant-row ${activeId === a.id ? 'active' : ''}`}>
       <button className="assistant-pick" onClick={() => onSelect(a.id)} title={a.instructions || 'Sem instruções extras'}>
         <span className="assistant-name">{activeId === a.id ? '● ' : ''}{a.name}</span>
-        <span className="history-meta">{a.mode ? MODE_LABEL[a.mode] : 'mantém o modo'}{builtin ? '' : ' · seu'}</span>
+        <span className="history-meta">{a.mode ? MODE_LABEL[a.mode] : 'mantém o modo'}{builtin ? '' : ' · seu'} · {normalizeAssistant(a).category}</span>
       </button>
       <button className="mini-link" title={`Contexto de ${a.name}`} onClick={() => setContextId(contextId === a.id ? null : a.id)}>contexto</button>
       {builtin
@@ -121,9 +132,16 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
 
   return (
     <>
+      <div className="assistant-filters">
+        <input className="model-input" aria-label="Buscar assistente pelo nome" placeholder="buscar por nome" value={query} maxLength={60} onChange={(e) => setQuery(e.target.value)} />
+        <div className="select-wrap small"><select aria-label="Filtrar categoria" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="">Todas ({filterAssistants(all, query).length})</option>
+          {[...new Set([...counts.keys(), ...(category ? [category] : [])])].sort((a, b) => a.localeCompare(b, 'pt-BR')).map((c) => <option key={c} value={c}>{c} ({counts.get(c) || 0})</option>)}
+        </select></div>
+      </div>
       <div className="assistant-list">
-        {BUILTIN_ASSISTANTS.map((a) => row(a, true))}
-        {custom.map((a) => row(a, false))}
+        {filterAssistants(all, query, category).map((a) => row(a, BUILTIN_ASSISTANTS.some((b) => b.id === a.id)))}
+        {!filterAssistants(all, query, category).length && <div className="panel-note">Nenhum assistente encontrado.</div>}
       </div>
       <button className="chip" onClick={() => startNew(null)}>+ novo assistente</button>
     </>
