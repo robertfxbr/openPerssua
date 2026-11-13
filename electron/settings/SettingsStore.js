@@ -82,6 +82,7 @@ class SettingsStore {
 
   // Valor para a tela: segredo vira só "tem / não tem"
   async getForRenderer(key) {
+    if (typeof key === 'string' && key.startsWith('mcp.')) return undefined;
     if (!isSecret(key)) return this.get(key);
     return (await this.get(key)) ? MASK : '';
   }
@@ -90,6 +91,7 @@ class SettingsStore {
     // Nunca vaza segredos para a tela: mascara valores de chaves API
     const all = { ...this.load() };
     for (const k of Object.keys(all)) {
+      if (k.startsWith('mcp.')) { delete all[k]; continue; }
       if (isSecret(k)) all[k] = all[k] ? MASK : '';
     }
     return all;

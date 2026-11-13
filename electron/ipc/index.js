@@ -1,7 +1,8 @@
 // Registro central de handlers IPC — 1 domínio por bloco.
 // Os nomes de canais seguem o padrão observado no original (domínio:ação).
 
-const { ipcMain, app, clipboard, shell } = require('electron');
+const { ipcMain, app, clipboard, shell, safeStorage } = require('electron');
+const { registerMcpIpc } = require('../mcp/ipc');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -32,18 +33,21 @@ const taskFor = (req) => TASK_OF_MODE[req.mode] || 'chat';
 const activeStreams = new Map();
 
 let whisper = null;
+let mcp = null;
 
 // Encerramento limpo: mata whisper-server e aborta streams (chamado no before-quit)
 function disposeIpc() {
   for (const controller of activeStreams.values()) controller.abort();
   activeStreams.clear();
   if (whisper) whisper.dispose();
+  mcp?.dispose();
 }
 
 function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) {
   const userDataDir = app.getPath('userData');
   const tokenStore = new TokenStore(path.join(userDataDir, 'chatgpt-token.bin'), fs);
   const router = new LLMRouter({ settingsStore, tokenStore });
+  mcp = registerMcpIpc({ ipcMain, safeStorage, settingsStore });
 
   const sendToOverlay = (channel, payload) => {
     const win = getOverlayWindow();
@@ -164,9 +168,15 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   // ---- LLM ----
   ipcMain.handle('llm:list-providers', () => router.listProviders());
   ipcMain.handle('llm:list-tasks', () => TASKS);
-  ipcMain.handle('llm:chat', async (_e, req) => {
-    return router.chat({ messages: buildMessages(req), model: req.model, task: taskFor(req),
-      ...reasoningOptions(req, await settingsStore.get('llm.thinkMore')) });
+  ipcMain.handle('llm:chat', async (event, req) => {
+    const options = { model: req.model, task: taskFor(req), ...reasoningOptions(req, await settingsStore.get('llm.thinkMore')) };
+    const controller = new AbortController(); const id = crypto.randomUUID(); activeStreams.set(id, controller);
+    try {
+      const prepared = await mcp.prepare(req, { sender: event.sender, signal: controller.signal,
+        chat: (messages, signal) => router.chat({ ...options, messages, signal }) });
+      if (controller.signal.aborted) throw new Error('cancelado');
+      return await router.chat({ ...options, messages: buildMessages(prepared), signal: controller.signal });
+    } finally { activeStreams.delete(id); }
   });
   // Diagnóstico: mede se o provedor principal responde e em quanto tempo
   ipcMain.handle('llm:test', async () => {
@@ -198,15 +208,14 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
       if (!event.sender.isDestroyed()) event.sender.send(channel, payload);
     };
 
-    router.chatStream({
-      messages: buildMessages(req),
-      model: req.model,
-      task: taskFor(req),
-      // sugestão ao vivo: o adaptador usa o raciocínio mais leve que o modelo aceitar
-      ...reasoningOptions(req, await settingsStore.get('llm.thinkMore')),
-      signal: controller.signal,
-      onChunk: (delta) => send('llm:stream-chunk', { streamId, delta }),
-    })
+    const options = { model: req.model, task: taskFor(req), ...reasoningOptions(req, await settingsStore.get('llm.thinkMore')) };
+    mcp.prepare(req, { sender: event.sender, streamId, signal: controller.signal,
+      chat: (messages, signal) => router.chat({ ...options, messages, signal }) })
+      .then(prepared => {
+        if (controller.signal.aborted) throw new Error('cancelado');
+        return router.chatStream({ ...options, messages: buildMessages(prepared), signal: controller.signal,
+          onChunk: delta => send('llm:stream-chunk', { streamId, delta }) });
+      })
       .then(() => send('llm:stream-done', { streamId }))
       .catch((err) => send('llm:stream-error', { streamId, error: String(err.message || err) }))
       .finally(() => activeStreams.delete(streamId));
@@ -252,6 +261,7 @@ function registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts }) 
   // API keys nunca voltam para a tela: o renderer só sabe se existe uma
   ipcMain.handle('settings:get', (_e, key) => settingsStore.getForRenderer(key));
   ipcMain.handle('settings:set', (_e, { key, value }) => {
+    if (typeof key !== 'string' || key.startsWith('mcp.')) throw new Error('Use a aba ferramentas para configurar MCP');
     if (isSecret(key) && value === MASK) return undefined; // campo não mexido
     return settingsStore.set(key, value);
   });

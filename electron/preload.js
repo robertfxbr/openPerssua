@@ -14,6 +14,19 @@ function on(channel, callback) {
 }
 
 contextBridge.exposeInMainWorld('teka', {
+  mcp: {
+    list: () => invoke('mcp:list'),
+    save: config => invoke('mcp:save', config),
+    import: json => invoke('mcp:import', json),
+    test: id => invoke('mcp:test', id),
+    enable: (id, enabled) => invoke('mcp:enable', { id, enabled }),
+    remove: id => invoke('mcp:remove', id),
+    setMode: (id, name, mode) => invoke('mcp:mode', { id, name, mode }),
+    confirm: (id, allowed) => invoke('mcp:confirm', { id, allowed }),
+    onConfirmation: cb => on('mcp:confirmation', cb),
+    onConfirmationClosed: cb => on('mcp:confirmation-closed', cb),
+    onUsed: cb => on('mcp:used', cb),
+  },
   overlay: {
     toggle: () => send('overlay:toggle'),
     show: () => invoke('overlay:show'),

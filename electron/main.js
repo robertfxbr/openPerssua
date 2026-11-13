@@ -155,7 +155,7 @@ async function bootstrap() {
   });
 }
 
-app.on('will-quit', () => shortcuts?.dispose());
+app.on('will-quit', () => { disposeIpc(); shortcuts?.dispose(); });
 
 // App residente: fechar o overlay não encerra — sai pelo tray ou Cmd+Q.
 app.on('window-all-closed', () => { /* intencionalmente vazio */ });
