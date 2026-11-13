@@ -24,6 +24,7 @@ const { moveToNextDisplay } = require('./system/displays');
 const { openLogsFolder } = require('./system/logs');
 const updater = require('./system/updater');
 const { confirmBoot } = require('./system/appBundle');
+const { updateShortcutIcons } = require('./system/shortcutIcon');
 
 const UPDATE_FIRST_CHECK_MS = 20000;          // espera o app assentar
 const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // e repete a cada 6 h
@@ -39,6 +40,21 @@ if (!app.commandLine.hasSwitch('user-data-dir') && fs.existsSync(LEGACY_USER_DAT
   app.setPath('userData', LEGACY_USER_DATA);
 }
 log.initialize();
+
+// Uma cópia só por pasta de dados. Abrir o Teka de novo (atalho, menu
+// Iniciar) só mostra a janela que já existe: duas cópias brigariam pelos
+// atalhos globais, pelo microfone e pelo banco.
+const isPrimaryInstance = app.requestSingleInstanceLock();
+if (!isPrimaryInstance) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const win = getOverlayWindow();
+    if (!win) return;
+    if (!win.isVisible()) win.show();
+    win.focus();
+  });
+}
 
 // Texto copiado maior que isso é cortado antes de ir ao overlay
 const MAX_CLIPBOARD_CHARS = 20000;
@@ -194,6 +210,8 @@ async function bootstrap() {
   registerIpc({ db, getOverlayWindow, isDev, settingsStore, shortcuts });
   await syncTray(settingsStore);
   await shortcuts.init();
+  // depois que a janela abriu: mexer em atalhos não atrasa a abertura
+  setTimeout(updateShortcutIcons, 3000);
 
   if (!isDev) {
     setTimeout(() => checkUpdates(settingsStore, false), UPDATE_FIRST_CHECK_MS);
@@ -211,7 +229,9 @@ app.on('will-quit', () => { disposeIpc(); shortcuts?.dispose(); });
 // App residente: fechar o overlay não encerra — sai pelo tray ou Cmd+Q.
 app.on('window-all-closed', () => { /* intencionalmente vazio */ });
 
-bootstrap().catch((err) => {
-  log.error('bootstrap failed', err);
-  app.quit();
-});
+if (isPrimaryInstance) {
+  bootstrap().catch((err) => {
+    log.error('bootstrap failed', err);
+    app.quit();
+  });
+}

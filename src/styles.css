@@ -1566,3 +1566,27 @@ svg.lucide { flex-shrink: 0; }
 /* sem mouse, a janela fica um pouco mais apagada para lembrar que é "vidro" */
 .app.passthrough { opacity: 0.82; }
 .option-label input[type='checkbox'] { accent-color: var(--mint); }
+
+/* ---------- quadros de texto cabem na janela ----------
+   Com resposta, sugestão e resumo juntos, a soma passava da altura da janela:
+   o fim do quadro ficava fora da tela e a rolagem dele não chegava lá.
+   Agora eles encolhem para caber e rolam por dentro. */
+.answer, .suggestion, .summary {
+  flex-shrink: 1;
+  min-height: 84px;
+}
+
+/* aviso: a chamada não está chegando pelo áudio do sistema */
+.sys-notice {
+  margin: 0 14px 8px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text);
+  background: color-mix(in srgb, var(--lilac) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lilac) 40%, transparent);
+}
+.sys-notice b { font-weight: 650; }
+.sys-notice .mini-link { margin-left: 6px; }
+.app.compact .sys-notice { margin: 4px 8px 0; padding: 4px 8px; font-size: 11px; max-height: 70px; overflow-y: auto; flex-shrink: 0; }

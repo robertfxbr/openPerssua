@@ -57,6 +57,9 @@ const DEFAULT_TRANSLATE = { enabled: false, target: 'en', sources: 'system' };
 // Whisper em silêncio), o flush acontece no FIM da fala: 1,1s de silêncio após
 // voz detectada, com teto de 15s por janela.
 const VAD_THRESHOLD = 0.012;     // RMS mínimo p/ considerar fala
+const SYS_SOUND_RMS = 0.002;     // qualquer som do PC (o loopback mudo entrega zeros)
+const SYS_SILENT_MS = 90000;     // tempo sem som do PC antes do aviso
+const SYS_SILENT_MIC_MS = 15000; // e você já falou isso nesse meio tempo
 const VAD_SILENCE_MS = 1100;     // silêncio que encerra o enunciado
 const VAD_MAX_WINDOW_MS = 15000; // força flush em falas muito longas
 
@@ -232,6 +235,11 @@ function App() {
   const transcriptBoxRef = useRef(null);
   const nearBottomRef = useRef(true);   // usuário está vendo o fim da transcrição?
   const sessionStartRef = useRef(null); // Date.now() do início da escuta atual
+  // Vigia do áudio do sistema: o Windows só entrega o som da saída PADRÃO.
+  // Se a chamada toca em outro fone/caixa, o lado "Reunião" fica mudo e o
+  // usuário precisa saber disso durante a chamada, não depois.
+  const sysWatchRef = useRef(null);
+  const [sysSilent, setSysSilent] = useState(false);
   const askRef = useRef(null);          // ask() atual, p/ atalhos registrados uma vez
   const screenRef = useRef(null);       // runScreenAnalysis() atual, idem
   const screenStreamIdRef = useRef(null);
@@ -1093,6 +1101,8 @@ function App() {
       setListening(false);
       setResumeTarget(pausing && sess ? { id: sess.dbId, paused: true } : null);
       setLevels({ mic: 0, sys: 0 });
+      sysWatchRef.current = null;
+      setSysSilent(false);
       stoppingRef.current = false;
       if (pausing) setError('Escuta pausada pelo lembrete. Suas falas estão salvas; toque no microfone para continuar.');
       else summarizeSession(sess?.dbId, lines); // resumo automático em background
@@ -1140,6 +1150,8 @@ function App() {
         });
         sessionRef.current.sysSttId = sysSttId;
         await startSystemCapture(sysSttId);
+        sysWatchRef.current = { lastSoundAt: Date.now(), micSpeechMs: 0, warned: false };
+        setSysSilent(false);
       } catch (e) {
         console.warn('loopback indisponível:', e);
         setError('áudio do sistema indisponível — transcrito apenas o microfone');
@@ -1200,9 +1212,11 @@ function App() {
     }
     api.stt.sendAudio(sttId, pcm.buffer);
 
+    const frameMs = (float.length / 16000) * 1000;
+    watchSystemAudio(slot, rms, frameMs);
+
     const v = vadRef.current[slot];
     if (!v) return;
-    const frameMs = (float.length / 16000) * 1000;
     if (rms > VAD_THRESHOLD) {
       v.speaking = true;
       v.hasSpeech = true;
@@ -1213,6 +1227,26 @@ function App() {
     }
     if (v.hasSpeech && Date.now() - v.lastFlushAt >= VAD_MAX_WINDOW_MS) {
       flushSlot(slot, sttId);
+    }
+  }
+
+  // Avisa quando você fala há um tempo e nenhum som do PC chega há 90 s.
+  // Qualquer som (voz, notificação, ruído) zera a contagem e tira o aviso.
+  function watchSystemAudio(slot, rms, frameMs) {
+    const w = sysWatchRef.current;
+    if (!w) return;
+    if (slot === 'sys') {
+      if (rms > SYS_SOUND_RMS) {
+        w.lastSoundAt = Date.now();
+        w.micSpeechMs = 0;
+        if (w.warned) { w.warned = false; setSysSilent(false); }
+      }
+      return;
+    }
+    if (rms > VAD_THRESHOLD) w.micSpeechMs += frameMs;
+    if (!w.warned && w.micSpeechMs >= SYS_SILENT_MIC_MS && Date.now() - w.lastSoundAt >= SYS_SILENT_MS) {
+      w.warned = true;
+      setSysSilent(true);
     }
   }
 
@@ -1496,6 +1530,11 @@ function App() {
     <span>cliques atravessam a janela · {hintKey('toggle-click-through')} volta</span>
   </div> : null;
 
+  const sysNotice = sysSilent && listening ? <div className="sys-notice" role="status">
+    <b>Nenhum som do computador chegou no último minuto e meio.</b> Se a outra pessoa está falando e nada aparece como Reunião, a chamada deve estar tocando em outro fone ou caixa: deixe esse aparelho como saída padrão do Windows, ou escolha "Padrão" na saída de áudio do Discord, Zoom ou Teams.
+    <button className="mini-link" onClick={() => setSysSilent(false)}>ok</button>
+  </div> : null;
+
   const listenNotice = listenDeadline !== null && listening ? <div className="listen-notice" role="alert">
     <span>continuar ouvindo? A escuta pausa em até 60 s.</span>
     <button className="chip" onClick={() => { listenReminderRef.current?.confirm(); setListenDeadline(null); }}>continuar</button>
@@ -1514,6 +1553,7 @@ function App() {
       <div className={`app compact ${ghost.clickThrough ? 'passthrough' : ''}`}>
         {listenNotice}
         {clickThroughNotice}
+        {sysNotice}
         <div className="compact-bar">
           <TekaMark size={18} />
           <button
@@ -1603,6 +1643,7 @@ function App() {
 
       {listenNotice}
       {clickThroughNotice}
+      {sysNotice}
       {showTheme && (
         <div className="theme-panel">
           <div className="settings-tabs">
