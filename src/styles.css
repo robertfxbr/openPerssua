@@ -1245,3 +1245,9 @@ html, body, #root {
 .context-file span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .attach-label { align-self: flex-start; cursor: pointer; }
 .attach-label input { display: none; }
+.assistant-uses { display: flex; flex-direction: column; gap: 5px; font-size: 11px; }
+.assistant-uses summary { cursor: pointer; padding: 5px 0; }
+.assistant-uses label { display: block; margin-top: 8px; }
+.assistant-uses textarea { width: 100%; box-sizing: border-box; }
+.suggested-questions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; white-space: normal; }
+.suggested-questions .chip { white-space: normal; text-align: left; }

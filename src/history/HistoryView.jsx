@@ -56,7 +56,7 @@ function sessionToMarkdown({ session, transcriptions, messages }) {
 
 // Tela de histórico: lista, renomear, excluir, limpar tudo, ver detalhes,
 // exportar em Markdown e retomar uma sessão antiga.
-export function HistoryView({ onBack, onResume, onError, copyText, listening, activeSessionId, model, assistant, assistantContext, profile }) {
+export function HistoryView({ onBack, onResume, onError, copyText, listening, activeSessionId, model, assistant, assistantInstructionsByUse, assistantContext, profile }) {
   const [sessions, setSessions] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [stats, setStats] = useState(null);
@@ -151,7 +151,8 @@ export function HistoryView({ onBack, onResume, onError, copyText, listening, ac
         profile: detail.session.kind === 'interview' ? profile : undefined,
         transcript: lines.slice(-MAX_DOC_LINES),
         summary: kind === 'email' && lastSummary ? lastSummary.content.replace(`${SUMMARY_TAG}\n`, '') : undefined,
-        assistant: kind === 'email' ? assistant : undefined,
+        assistant,
+        assistantInstructionsByUse,
         assistantContext,
         model,
       });

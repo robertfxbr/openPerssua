@@ -3,7 +3,7 @@ const { buildInterviewSummaryMessages } = require('./interview');
 const { buildAssistMessages } = require('./assist');
 const { buildScreenMessages } = require('./screen');
 const {
-  buildFollowupMessages, buildCompactMessages, buildTranslateMessages, buildPingMessages,
+  buildFollowupMessages, buildCompactMessages, buildTranslateMessages, buildPingMessages, buildQuestionMessages,
 } = require('./followup');
 // Trecho colado muito grande estoura o contexto de modelos menores
 const MAX_CONTEXT_CHARS = 20000;
@@ -12,12 +12,16 @@ const text = (v, max) => (typeof v === 'string' ? v.slice(0, max) : undefined);
 
 function buildBaseMessages(req) {
   const memory = text(req.memory, 8000);
-  const assistant = text(req.assistant, 4000);
+  const use = req.mode === 'assist' ? 'live' : req.mode === 'questions' ? 'questions'
+    : ['summary', 'email'].includes(req.mode) ? 'summary' : 'response';
+  const assistant = [text(req.assistant, 4000), text(req.assistantInstructionsByUse?.[use], 4000)].filter(Boolean).join('\n\n');
   switch (req.mode) {
     case 'summary':
       return req.summaryKind === 'interview'
-        ? buildInterviewSummaryMessages({ transcript: req.transcript, memory, profile: text(req.profile, 6000) })
-        : buildSummaryMessages({ transcript: req.transcript, memory });
+        ? buildInterviewSummaryMessages({ transcript: req.transcript, memory, profile: text(req.profile, 6000), assistant })
+        : buildSummaryMessages({ transcript: req.transcript, memory, assistant });
+    case 'questions':
+      return buildQuestionMessages({ transcript: req.transcript, memory, question: req.question, answer: req.answer, assistant });
     case 'email':
       return buildFollowupMessages({
         transcript: req.transcript, memory, summary: text(req.summary, 8000), assistant,

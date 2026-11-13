@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { detectQuestion } from './assist/questionDetector';
 import { leadLine } from './assist/layered';
+import { SuggestedQuestions } from './assist/SuggestedQuestions';
 import { LayeredAnswer } from './assist/LayeredAnswer';
 import { HistoryView } from './history/HistoryView';
 import { ShortcutsPanel } from './panels/ShortcutsPanel';
@@ -175,6 +176,8 @@ function App() {
 
   // ---- contexto colado e análise de tela ----
   const [attached, setAttached] = useState(null);       // { text } anexado à próxima pergunta
+  const [answerQuestions, setAnswerQuestions] = useState(null);
+  const [screenQuestions, setScreenQuestions] = useState(null);
   const [answerNote, setAnswerNote] = useState('');     // de onde veio a pergunta da resposta atual
   const [screenResult, setScreenResult] = useState(null); // { image, question, text, streaming }
 
@@ -241,6 +244,7 @@ function App() {
   const echoFilterRef = useRef(echoFilter);
   const noiseRef = useRef(noiseSuppression);
   const sttFastRef = useRef(sttFast);
+  const assistantUsesRef = useRef({});
   const assistantPreferencesRef = useRef({});
   const assistantContextRef = useRef('');
   const assistantRef = useRef('');       // instruções do assistente escolhido
@@ -262,7 +266,9 @@ function App() {
   useEffect(() => { noiseRef.current = noiseSuppression; }, [noiseSuppression]);
   useEffect(() => { sttFastRef.current = sttFast; }, [sttFast]);
   useEffect(() => {
-    assistantRef.current = findAssistant(assistantId, customAssistants).instructions || '';
+    const assistant = findAssistant(assistantId, customAssistants);
+    assistantRef.current = assistant.instructions || '';
+    assistantUsesRef.current = assistant.instructionsByUse || {};
     assistantPreferencesRef.current = assistantPreferences[assistantId] || {};
     assistantContextRef.current = contextToText(assistantContexts[assistantId]);
   }, [assistantId, customAssistants, assistantContexts, assistantPreferences]);
@@ -875,6 +881,7 @@ function App() {
         question: q,
         ...liveContext(layered ? INTERVIEW_CONTEXT_LINES : ASSIST_CONTEXT_LINES),
         assistant: assistantRef.current || undefined,
+        assistantInstructionsByUse: assistantUsesRef.current,
         assistantContext: assistantContextRef.current || undefined,
         certainOnly: assistantPreferencesRef.current.certainOnly === true,
         assistMode: assistModeRef.current,
@@ -925,6 +932,8 @@ function App() {
     try {
       const text = await api.llm.chat({
         mode: 'summary',
+        assistant: assistantRef.current || undefined,
+        assistantInstructionsByUse: assistantUsesRef.current,
         assistantContext: assistantContextRef.current || undefined,
         certainOnly: assistantPreferencesRef.current.certainOnly === true,
         summaryKind: interview ? 'interview' : undefined,
@@ -955,6 +964,7 @@ function App() {
         memory: ctx.memory,
         summary: summary?.text || undefined,
         assistant: assistantRef.current || undefined,
+        assistantInstructionsByUse: assistantUsesRef.current,
         assistantContext: assistantContextRef.current || undefined,
         certainOnly: assistantPreferencesRef.current.certainOnly === true,
         model: llmModelRef.current || undefined,
@@ -1195,10 +1205,18 @@ function App() {
     if (!q.trim() || busy) return;
     setError('');
     setAnswer('');
+    setAnswerQuestions(null);
     setAnswerNote(context ? `sobre o trecho copiado (${context.length} caracteres)` : '');
     setBusy(true);
     // Inscreve os listeners ANTES do invoke: o primeiro chunk pode chegar
     // antes da promise do invoke resolver (race real observado em auditoria).
+    const questionSeed = { ...liveContext(), assistant: assistantRef.current,
+      assistantInstructionsByUse: assistantUsesRef.current, assistantContext: assistantContextRef.current,
+      profile: profileRef.current, model: llmModelRef.current, question: q };
+    const requestedStreamId = crypto.randomUUID();
+    askStreamIdRef.current = requestedStreamId;
+    let streamError = null;
+    let resolveDone;
     let acc = '';
     const matches = (streamId) =>
       !askStreamIdRef.current || streamId === askStreamIdRef.current;
@@ -1207,21 +1225,21 @@ function App() {
       acc += delta;
       setAnswer(acc);
     });
+    const done = new Promise((resolve) => { resolveDone = resolve; });
     const unsubErr = api.llm.onStreamError(({ streamId, error: err }) => {
-      if (matches(streamId)) setError(err);
+      if (!matches(streamId)) return;
+      streamError = err;
+      setError(err);
+      resolveDone();
     });
-    const done = new Promise((resolve) => {
-      const unsubDone = api.llm.onStreamDone(({ streamId }) => {
-        if (!matches(streamId)) return;
-        unsubDone();
-        resolve();
-      });
-    });
+    const unsubDone = api.llm.onStreamDone(({ streamId }) => { if (matches(streamId)) resolveDone(); });
     try {
       const { streamId } = await api.llm.chatStream({
+        streamId: requestedStreamId,
         question: q,
         ...liveContext(),
         assistant: assistantRef.current || undefined,
+        assistantInstructionsByUse: assistantUsesRef.current,
         assistantContext: assistantContextRef.current || undefined,
         certainOnly: assistantPreferencesRef.current.certainOnly === true,
         context: context || undefined,
@@ -1231,6 +1249,7 @@ function App() {
       });
       askStreamIdRef.current = streamId;
       await done;
+      if (acc && !streamError) setAnswerQuestions({ ...questionSeed, answer: acc });
       const dbId = sessionRef.current?.dbId;
       if (dbId && acc) api.db.addMessage({ sessionId: dbId, role: 'assistant', content: acc });
       if (!isOverride) setQuestion('');
@@ -1240,6 +1259,7 @@ function App() {
     } finally {
       unsubChunk();
       unsubErr();
+      unsubDone();
       askStreamIdRef.current = null;
       setBusy(false);
     }
@@ -1262,6 +1282,9 @@ function App() {
     const q = question.trim();
     setScreenResult({ image: null, question: q, text: '', streaming: true, capturing: true });
 
+    setScreenQuestions(null);
+    const questionSeed = { ...liveContext(), assistant: assistantRef.current, assistantInstructionsByUse: assistantUsesRef.current,
+      assistantContext: assistantContextRef.current, profile: profileRef.current, model: llmModelRef.current, question: q };
     const shot = await api.screen.capture().catch((e) => ({ ok: false, error: String(e?.message || e) }));
     if (!shot?.ok) {
       setScreenResult(null);
@@ -1300,6 +1323,7 @@ function App() {
         question: q,
         ...liveContext(),
         assistant: assistantRef.current || undefined,
+        assistantInstructionsByUse: assistantUsesRef.current,
         assistantContext: assistantContextRef.current || undefined,
         certainOnly: assistantPreferencesRef.current.certainOnly === true,
         profile: profileRef.current,
@@ -1307,6 +1331,7 @@ function App() {
         model: llmModelRef.current || undefined,
       });
       await done;
+      if (acc && !streamErr && !screenAbortedRef.current) setScreenQuestions({ ...questionSeed, answer: acc });
       if (streamErr && !screenAbortedRef.current) setError(`análise de tela: ${streamErr}`);
       const dbId = sessionRef.current?.dbId;
       if (dbId && acc && !screenAbortedRef.current) {
@@ -1394,6 +1419,7 @@ function App() {
         listening={listening || starting}
         activeSessionId={sessionRef.current?.dbId || null}
         model={llmModel || undefined}
+        assistantInstructionsByUse={findAssistant(assistantId, customAssistants).instructionsByUse}
         assistantContext={contextToText(assistantContexts[assistantId])}
         assistant={assistantRef.current || undefined}
         profile={profile}
@@ -1810,6 +1836,7 @@ function App() {
           <div className="sug-text">
             {screenResult.text || (screenResult.capturing ? 'capturando a tela…' : 'analisando…')}
           </div>
+          {!screenResult.streaming && <SuggestedQuestions key={screenQuestions?.answer} seed={screenQuestions} onAsk={ask} onError={setError} />}
         </div>
       )}
 
@@ -1845,6 +1872,7 @@ function App() {
         <div className="answer">
           <span className="label">✦ resposta{answerNote ? ` · ${answerNote}` : ''}</span>
           {answer}
+          {!busy && <SuggestedQuestions key={answerQuestions?.answer} seed={answerQuestions} onAsk={ask} onError={setError} />}
         </div>
       )}
 

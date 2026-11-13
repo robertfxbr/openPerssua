@@ -1,6 +1,6 @@
 // Pedaços de prompt reaproveitados por vários modos.
 
-const MAX_ASSISTANT_CHARS = 4000;
+const MAX_ASSISTANT_CHARS = 8002; // gerais + instruções do uso atual
 const MAX_MEMORY_CHARS = 6000;
 
 // Instruções do assistente escolhido (Configurações → assistentes). Vêm do

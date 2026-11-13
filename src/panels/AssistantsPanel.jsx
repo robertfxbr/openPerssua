@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { normalizeAssistant, INSTRUCTION_USES } from '../assistants/model.mjs';
 import { AssistantContextEditor } from './AssistantContextEditor';
 import { BUILTIN_ASSISTANTS, ASSISTANT_MODES } from '../assistants/presets';
 
@@ -17,6 +18,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
       name: base ? `${base.name} (cópia)` : '',
       mode: base?.mode || 'meeting',
       instructions: base?.instructions || '',
+      instructionsByUse: normalizeAssistant(base).instructionsByUse,
       contextCopy: base ? contexts[base.id] : undefined,
       preferencesCopy: base ? preferences[base.id] : undefined,
       isNew: true,
@@ -26,12 +28,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
   function save() {
     const name = editing.name.trim();
     if (!name) return;
-    const item = {
-      id: editing.id,
-      name: name.slice(0, 60),
-      mode: editing.mode,
-      instructions: editing.instructions.slice(0, MAX_INSTRUCTIONS),
-    };
+    const item = normalizeAssistant({ ...editing, name });
     const next = editing.isNew
       ? [...custom, item]
       : custom.map((a) => (a.id === item.id ? item : a));
@@ -69,14 +66,25 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
             </button>
           ))}
         </div>
+        <div className="panel-note">Instruções gerais · valem para todos os usos</div>
         <textarea
           className="profile-editor"
           rows={5}
-          value={editing.instructions}
+          aria-label="Instruções gerais"
+          value={editing.instructions || ''}
           maxLength={MAX_INSTRUCTIONS}
           placeholder="Como o copiloto deve agir: tom, foco, o que evitar. Ex.: responda sempre em tópicos e puxe para o próximo passo."
           onChange={(e) => setEditing({ ...editing, instructions: e.target.value })}
         />
+        <details className="assistant-uses">
+          <summary>Instruções por uso (opcional)</summary>
+          <div className="panel-note">Somadas às gerais só no uso indicado.</div>
+          {INSTRUCTION_USES.map(([key, label]) => <label key={key}>{label}
+            <textarea className="profile-editor" rows={3} maxLength={MAX_INSTRUCTIONS}
+              value={editing.instructionsByUse?.[key] || ''}
+              onChange={(e) => setEditing({ ...editing, instructionsByUse: { ...editing.instructionsByUse, [key]: e.target.value } })} />
+          </label>)}
+        </details>
         <div className="ob-nav">
           <button className="auth-link" onClick={() => setEditing(null)}>cancelar</button>
           <div style={{ flex: 1 }} />
@@ -97,7 +105,7 @@ export function AssistantsPanel({ activeId, custom, onSelect, onCustomChange, co
         ? a.id !== 'padrao' && <button className="mini-link" title="Duplicar para editar" onClick={() => startNew(a)}>⧉</button>
         : (
           <>
-            <button className="mini-link" title="Editar" onClick={() => setEditing({ ...a, isNew: false })}>✎</button>
+            <button className="mini-link" title="Editar" onClick={() => setEditing({ ...normalizeAssistant(a), isNew: false })}>✎</button>
             <button className="mini-link danger" title="Excluir" onClick={() => remove(a.id)}>🗑</button>
           </>
         )}

@@ -21,3 +21,16 @@ for (const mode of ['chat', 'screen', 'assist']) {
   assert.ok(!buildMessages({ ...req, certainOnly: false })[0].content.includes('Não tenho base para responder'));
 }
 console.log('PASS: certeza opcional em resposta, tela e ao vivo, com perfil global');
+
+const instructionsByUse = { response: 'USO_RESPOSTA', live: 'USO_AO_VIVO', questions: 'USO_PERGUNTAS', summary: 'USO_RESUMO' };
+for (const [mode, expected] of [['chat', 'response'], ['screen', 'response'], ['assist', 'live'], ['questions', 'questions'], ['summary', 'summary'], ['email', 'summary']]) {
+  for (const summaryKind of [undefined, 'interview']) {
+    const req = { mode, summaryKind, image: 'imagem', assistant: 'GERAIS', assistantInstructionsByUse: instructionsByUse };
+    const messages = buildMessages(req);
+    assert.match(messages[0].content, /GERAIS/, `${mode}: gerais`);
+    for (const [usage, marker] of Object.entries(instructionsByUse)) {
+      assert.equal(messages[0].content.includes(marker), usage === expected, `${mode}: ${usage}`);
+    }
+  }
+}
+console.log('PASS: instruções gerais e por uso, com resumos de reunião e entrevista');

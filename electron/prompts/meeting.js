@@ -36,9 +36,9 @@ function buildCopilotMessages({ transcript, question, extraContext, memory, assi
   ];
 }
 
-function buildSummaryMessages({ transcript, memory }) {
+function buildSummaryMessages({ transcript, memory, assistant }) {
   return [
-    { role: 'system', content: MEETING_SUMMARY_SYSTEM },
+    { role: 'system', content: withAssistant(MEETING_SUMMARY_SYSTEM, assistant) },
     { role: 'user', content: `${memoryBlock(memory)}<transcript>\n${transcriptLines(transcript)}\n</transcript>` },
   ];
 }

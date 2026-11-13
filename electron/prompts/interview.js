@@ -2,7 +2,7 @@
 // itens de ação; numa entrevista o que importa é o que perguntaram, como o
 // candidato se saiu e o que levar para a próxima etapa.
 
-const { memoryBlock, transcriptLines } = require('./blocks');
+const { withAssistant, memoryBlock, transcriptLines } = require('./blocks');
 
 const INTERVIEW_SUMMARY_SYSTEM = `Você faz o balanço de uma ENTREVISTA DE EMPREGO a partir da transcrição, para o CANDIDATO.
 
@@ -38,10 +38,10 @@ Para a próxima etapa
 Mensagem de agradecimento
 Uma mensagem curta e pronta para enviar ao entrevistador (e-mail ou LinkedIn), retomando 1 ponto específico da conversa. Use [nome] onde faltar.`;
 
-function buildInterviewSummaryMessages({ transcript, memory, profile }) {
+function buildInterviewSummaryMessages({ transcript, memory, profile, assistant }) {
   const profileBlock = profile?.trim() ? `\n<perfil_do_candidato>\n${profile.trim()}\n</perfil_do_candidato>` : '';
   return [
-    { role: 'system', content: INTERVIEW_SUMMARY_SYSTEM },
+    { role: 'system', content: withAssistant(INTERVIEW_SUMMARY_SYSTEM, assistant) },
     { role: 'user', content: `${memoryBlock(memory)}<transcript>\n${transcriptLines(transcript)}\n</transcript>${profileBlock}` },
   ];
 }
