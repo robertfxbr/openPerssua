@@ -3,12 +3,15 @@ const { validateArguments } = require('./schema');
 const manual = req => [undefined, 'chat', 'screen'].includes(req.mode);
 
 // O deadline também cobre provedores que não respeitam AbortSignal.
-function bounded(promise, signal) {
+function bounded(work, signal) {
   if (signal.aborted) return Promise.reject(new Error('MCP cancelado'));
   return new Promise((resolve, reject) => {
     const abort = () => reject(new Error('MCP cancelado'));
     signal.addEventListener('abort', abort, { once: true });
-    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    Promise.resolve().then(() => {
+      if (signal.aborted) throw new Error('MCP cancelado');
+      return typeof work === 'function' ? work() : work;
+    }).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
   });
 }
 function parse(stage, raw) {
@@ -30,12 +33,12 @@ async function orchestrate({ req, manager, chat, confirm, signal, onUsed = () =>
     for (let attempt = 0; attempt < 2; attempt++) {
       const messages = orchestrationMessages(stage, data, req.mcpInstructions?.[stage]);
       if (attempt) messages[0].content += '\nA resposta anterior não respeitou o formato. Corrija e devolva apenas o JSON exigido.';
-      try { return parse(stage, await bounded(chat(messages, active), active)); }
+      try { return parse(stage, await bounded(() => chat(messages, active), active)); }
       catch (error) { if (active.aborted || attempt) throw error; }
     }
   };
   try {
-    const tools = (await bounded(manager.available(req.mcpServerIds, active), active)).filter(t => t.mode !== 'off').slice(0, 100);
+    const tools = (await bounded(() => manager.available(req.mcpServerIds, active), active)).filter(t => t.mode !== 'off').slice(0, 100);
     if (!tools.length) return { context: '', used };
     const base = { question: String(req.question || '').slice(0, 4000), transcript: JSON.stringify(req.transcript || []).slice(-12000),
       context: [req.memory, req.context, req.assistantContext, req.profile].filter(Boolean).join('\n').slice(0, 24000),
@@ -48,7 +51,7 @@ async function orchestrate({ req, manager, chat, confirm, signal, onUsed = () =>
       if (JSON.stringify(decision.arguments).length > 16000) break;
       let raw;
       try {
-        const result = await bounded(manager.call(tool, decision.arguments, { confirm, signal: active }), active);
+        const result = await bounded(() => manager.call(tool, decision.arguments, { confirm, signal: active }), active);
         used.push({ serverId: tool.serverId, serverName: tool.serverName, name: tool.name, isError: result?.isError === true });
         onUsed([...used]);
         raw = JSON.stringify(result).slice(0, 12000);
@@ -57,7 +60,7 @@ async function orchestrate({ req, manager, chat, confirm, signal, onUsed = () =>
         break;
       }
       // Preserva a evidência mesmo se acabar o prazo ou o resumo falhar.
-      const item = { tool: tool.id, context: raw }; results.push(item);
+      const item = { tool: tool.id, isError: used.at(-1).isError, context: raw }; results.push(item);
       const summary = await json('result', { question: base.question, tool: tool.id, raw });
       item.context = summary.context.slice(0, 2000);
       if (count === 2) break;
