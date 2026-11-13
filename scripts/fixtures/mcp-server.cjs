@@ -19,7 +19,7 @@ async function reply(msg) {
     if (args.termo === 'morrer') { process.exit(7); }
     if (args.termo === 'lento') await new Promise(r => setTimeout(r, 2000));
     if (args.termo === 'stderr') process.stderr.write('x'.repeat(2 * 1024 * 1024));
-    result = { content: [{ type: 'text', text: msg.params.name === 'somar' ? String(args.a + args.b) : `Nota: ${args.termo}` }], ...(args.termo === 'erro' ? { isError: true } : {}) };
+    result = { content: [{ type: 'text', text: msg.params.name === 'somar' ? String(args.a + args.b) : args.termo === 'argv' ? JSON.stringify(process.argv.slice(2)) : `Nota: ${args.termo}` }], ...(args.termo === 'erro' ? { isError: true } : {}) };
   } else return { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Método ausente' } };
   return { jsonrpc: '2.0', id: msg.id, result };
 }

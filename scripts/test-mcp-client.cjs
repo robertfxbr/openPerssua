@@ -3,11 +3,13 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { McpClient } = require('../electron/mcp/Client');
 const fixture = path.join(__dirname, 'fixtures/mcp-server.cjs');
-async function exercise(client) {
+async function exercise(client, expectedArgs) {
   try {
     await client.connect();
     assert.deepEqual((await client.listTools()).map(t => t.name), ['somar', 'buscar_nota']);
+    await assert.rejects(client.request('metodo-ausente', {}), /Método ausente/);
     assert.equal((await client.callTool('somar', { a: 2, b: 3 })).content[0].text, '5');
+    if (expectedArgs) assert.deepEqual(JSON.parse((await client.callTool('buscar_nota', { termo: 'argv' })).content[0].text), expectedArgs);
     assert.equal((await client.callTool('buscar_nota', { termo: 'erro' })).isError, true);
     await assert.rejects(client.callTool('buscar_nota', { termo: 'lento' }, { timeout: 60 }), /tempo/i);
     const controller = new AbortController();
@@ -36,7 +38,8 @@ async function exercise(client) {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'teka-mcp-'));
     const shim = path.join(temp, 'teste comando.cmd');
     fs.writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${fixture}" %*\r\n`);
-    try { await exercise(new McpClient({ type: 'stdio', command: shim, args: ['argumento com espaço'] })); }
+    const quotedArgs = ['argumento com espaço', '--valor={"pasta":"C:\\pasta com espaço"}', 'a&b'];
+    try { await exercise(new McpClient({ type: 'stdio', command: shim, args: quotedArgs }), quotedArgs); }
     finally { fs.rmSync(temp, { recursive: true, force: true }); }
     // Shims com os nomes reais exercitam o mesmo caminho de npx/uvx sem rede.
     const shims = fs.mkdtempSync(path.join(os.tmpdir(), 'teka-mcp-shims-'));

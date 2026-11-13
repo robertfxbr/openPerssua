@@ -148,7 +148,7 @@ class McpManager {
     }));
     return catalogs.flat();
   }
-  async call(tool, args, { confirm, signal, authorize } = {}) {
+  async call(tool, args, { confirm, signal, authorize, onStart } = {}) {
     const config = (await this.configs()).find(c => c.id === tool.serverId);
     if (!config?.enabled) throw new Error('Servidor desligado');
     const mode = config.modes[tool.name] || 'confirm';
@@ -162,7 +162,7 @@ class McpManager {
     const actual = this.states.get(config.id)?.tools.find(t => t.name === tool.name);
     if (!actual) throw new Error('Ferramenta não encontrada no catálogo');
     require('./schema').validateArguments(actual.inputSchema, args);
-    try { return await (await this.client(config)).callTool(tool.name, args, { signal }); }
+    try { return await (await this.client(config)).callTool(tool.name, args, { signal, onStart }); }
     catch (error) { throw new Error(this.safeError(error, config)); }
   }
   dispose() { this.disposed = true; for (const id of this.clients.keys()) this.stop(id); }

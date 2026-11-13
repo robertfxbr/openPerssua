@@ -50,13 +50,20 @@ async function orchestrate({ req, manager, chat, confirm, signal, onUsed = () =>
       validateArguments(tool.inputSchema, decision.arguments);
       if (JSON.stringify(decision.arguments).length > 16000) break;
       let raw;
+      let attempt;
+      const onStart = () => {
+        attempt = { serverId: tool.serverId, serverName: tool.serverName, name: tool.name, isError: false, pending: true };
+        used.push(attempt); onUsed([...used]);
+      };
       try {
-        const result = await bounded(() => manager.call(tool, decision.arguments, { confirm, signal: active }), active);
-        used.push({ serverId: tool.serverId, serverName: tool.serverName, name: tool.name, isError: result?.isError === true });
+        const result = await bounded(() => manager.call(tool, decision.arguments, { confirm, signal: active, onStart }), active);
+        if (!attempt) onStart();
+        attempt.pending = false; attempt.isError = result?.isError === true;
         onUsed([...used]);
         raw = JSON.stringify(result).slice(0, 12000);
       } catch (error) {
-        if (!active.aborted) results.push({ tool: tool.id, context: `Consulta não concluída: ${String(error.message).slice(0, 1500)}` });
+        if (attempt) { attempt.pending = false; attempt.isError = true; onUsed([...used]); }
+        if (!active.aborted || attempt) results.push({ tool: tool.id, isError: true, context: `Consulta não concluída; o resultado não foi confirmado: ${String(error.message).slice(0, 1500)}` });
         break;
       }
       // Preserva a evidência mesmo se acabar o prazo ou o resumo falhar.

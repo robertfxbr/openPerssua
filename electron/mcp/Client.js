@@ -187,6 +187,8 @@ class McpClient {
 
   async callTool(name, args, options = {}) {
     await this.connect(options);
+    if (options.signal?.aborted) throw new Error('MCP cancelado');
+    options.onStart?.();
     return this.request('tools/call', { name, arguments: args }, options);
   }
 
