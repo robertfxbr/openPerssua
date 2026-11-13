@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { cleanForCopy } from '../assist/cleanCopy.mjs';
 import { formatDuration } from '../util/time';
 
 const api = window.teka;
@@ -344,7 +345,7 @@ export function HistoryView({ notice, onBack, onResume, onError, copyText, liste
                   <span className="label">{isSummary ? '✦ resumo' : isEmail ? '✉ e-mail de follow-up' : '✦ copiloto'}</span>
                   {body}
                   {(isSummary || isEmail) && (
-                    <button className="mini-link copy-doc" onClick={() => copyText(body)}>copiar</button>
+                    <button className="mini-link copy-doc" onClick={() => copyText(cleanForCopy(body))}>copiar</button>
                   )}
                 </div>
               );

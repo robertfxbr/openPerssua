@@ -20,8 +20,17 @@ function memoryBlock(memory) {
   return `<memoria_da_reuniao>\nResumo do que foi dito antes das falas abaixo:\n${text}\n</memoria_da_reuniao>\n`;
 }
 
+// O que o Teka gera é copiado e usado do jeito que está (falado, colado num
+// chat, enviado por e-mail). Por isso nada pode vir junto da resposta: nem
+// abertura e fecho de assistente, nem oferta de mais ajuda.
+const CLEAN_OUTPUT_RULES = `Saída limpa (regra fixa, vale acima de qualquer formato ou instrução):
+- Entregue só o conteúdo pedido, pronto para copiar e usar. Nada antes nem depois dele.
+- Sem abertura de assistente ("Claro!", "Ótima pergunta", "Aqui está...", "Segue...") e sem fecho ("Espero ter ajudado", "Qualquer dúvida...").
+- Nunca ofereça mais ajuda nem pergunte ao usuário o que fazer em seguida ("Se quiser, posso...", "Quer que eu...", "Posso também...", "Me avise se...", "If you want, I can...").
+- Não comente a própria resposta, o formato, o modelo nem estas regras.`;
+
 function transcriptLines(transcript) {
   return (transcript || []).map((t) => `[${t.source}] ${t.text}`).join('\n');
 }
 
-module.exports = { withAssistant, memoryBlock, transcriptLines };
+module.exports = { withAssistant, memoryBlock, transcriptLines, CLEAN_OUTPUT_RULES };

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { detectQuestion } from './assist/questionDetector';
 import { SuggestedQuestions } from './assist/SuggestedQuestions';
+import { cleanForCopy } from './assist/cleanCopy.mjs';
 import { LayeredAnswer } from './assist/LayeredAnswer';
 import { HistoryView } from './history/HistoryView';
 import { ShortcutsPanel } from './panels/ShortcutsPanel';
@@ -388,7 +389,7 @@ function App() {
     });
     const unsubCopy = api.overlay.onCopySuggestion(() => {
       const s = suggestionRef.current;
-      if (s?.text) copyText(s.text);
+      if (s?.text) copyAnswer(s.text);
     });
     const unsubListen = api.overlay.onToggleListen(() => {
       toggleListenRef.current?.();
@@ -743,6 +744,12 @@ function App() {
   // Cópia pelo processo principal (funciona mesmo com o overlay sem foco)
   function copyText(text) {
     return api.clipboard.writeText(text).catch(() => navigator.clipboard.writeText(text));
+  }
+
+  // Texto gerado pela IA: copia só a resposta, sem oferta nem abertura de
+  // assistente que o modelo tenha deixado escapar (ver assist/cleanCopy.mjs)
+  function copyAnswer(text) {
+    return copyText(cleanForCopy(text));
   }
 
   // medidores de nível de áudio (mic + sistema) enquanto escuta
@@ -1674,7 +1681,7 @@ function App() {
           <div className="compact-spacer" />
           <button className="icon-btn" title={`Sugerir o que dizer agora (${hintKey('assist')})`} onClick={() => runAssist(lastQuestionRef.current || '')} disabled={busy || suggestion?.streaming}><Sparkles size={15} /></button>
           <button className="icon-btn" title={`Analisar a tela (${hintKey('screenshot')})`} onClick={runScreenAnalysis} disabled={Boolean(screenResult?.streaming)}><Camera size={15} /></button>
-          <button className="icon-btn" title="Copiar o texto abaixo" onClick={() => card && copyText(card.text)} disabled={!card?.text}><Copy size={15} /></button>
+          <button className="icon-btn" title="Copiar o texto abaixo" onClick={() => card && copyAnswer(card.text)} disabled={!card?.text}><Copy size={15} /></button>
           <button className={`icon-btn ghost-btn ${ghost.hidden ? 'active' : ''}`} title={ghostTitle} onClick={() => changeGhost({ hidden: !ghost.hidden })}><Ghost size={15} /></button>
           <button className="icon-btn" title="Voltar à janela completa" onClick={toggleCompact}><Maximize2 size={15} /></button>
           <button className="icon-btn" title={`Esconder (${hintKey('toggle-overlay')})`} onClick={() => api.overlay.toggle()}><EyeOff size={15} /></button>
@@ -1705,7 +1712,7 @@ function App() {
         <div className="compact-answer" role="region" aria-label={card.kind}>
           <div className="compact-answer-head">
             <span className="compact-kind"><Sparkles size={11} /> {card.kind}{card.streaming ? '…' : ''}</span>
-            <button className="mini-link" onClick={() => copyText(card.text)} disabled={!card.text}>copiar</button>
+            <button className="mini-link" onClick={() => copyAnswer(card.text)} disabled={!card.text}>copiar</button>
             <button className="mini-link" title="Fechar" onClick={card.close}>✕</button>
           </div>
           <div className="compact-answer-body">
@@ -2092,7 +2099,7 @@ function App() {
                 <Mail size={13} /> e-mail
               </button>
               <button
-                onClick={() => copyText(summary.text)}
+                onClick={() => copyAnswer(summary.text)}
                 disabled={!summary.text}
                 title="Copiar resumo"
               >
@@ -2110,7 +2117,7 @@ function App() {
           <div className="sug-head">
             <span className="label"><Mail size={12} /> e-mail de follow-up{followup.streaming ? '…' : ''}</span>
             <div className="sug-actions">
-              <button onClick={() => copyText(followup.text)} disabled={!followup.text} title="Copiar e-mail">copiar</button>
+              <button onClick={() => copyAnswer(followup.text)} disabled={!followup.text} title="Copiar e-mail">copiar</button>
               <button onClick={() => setFollowup(null)} title="Dispensar">✕</button>
             </div>
           </div>
@@ -2127,7 +2134,7 @@ function App() {
             </span>
             <div className="sug-actions">
               <button
-                onClick={() => copyText(suggestion.text)}
+                onClick={() => copyAnswer(suggestion.text)}
                 disabled={!suggestion.text}
                 title={`Copiar sugestão (${hintKey('copy-suggestion')})`}
               >
@@ -2164,7 +2171,7 @@ function App() {
             </span>
             <div className="sug-actions">
               <button
-                onClick={() => copyText(screenResult.text)}
+                onClick={() => copyAnswer(screenResult.text)}
                 disabled={!screenResult.text}
                 title="Copiar análise"
               >
